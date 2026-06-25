@@ -10,6 +10,8 @@ const globalMongo = globalThis as typeof globalThis & {
   __vscbotMongo?: GlobalMongo;
 };
 
+let indexesPromise: Promise<void> | undefined;
+
 if (!globalMongo.__vscbotMongo) {
   globalMongo.__vscbotMongo = {};
 }
@@ -40,12 +42,28 @@ export async function getDb(): Promise<Db> {
 }
 
 export async function ensureMongoIndexes(): Promise<void> {
+  if (indexesPromise) {
+    return indexesPromise;
+  }
+
+  indexesPromise = createMongoIndexes().catch((error) => {
+    indexesPromise = undefined;
+    throw error;
+  });
+
+  return indexesPromise;
+}
+
+async function createMongoIndexes(): Promise<void> {
   const db = await getDb();
 
   await Promise.all([
     db.collection("reports").createIndex({ createdAt: -1 }),
     db.collection("reports").createIndex({ "window.labelDate": 1, createdAt: -1 }),
     db.collection("fuel_snapshots").createIndex({ labelDate: 1, createdAt: 1 }),
+    db.collection("fuel_detected_refills").createIndex({ eventKey: 1 }, { unique: true }),
+    db.collection("fuel_detected_refills").createIndex({ labelDate: 1, registration: 1, afterTime: -1 }),
+    db.collection("fuel_detected_refills").createIndex({ labelDate: 1, status: 1, refilledLiters: -1 }),
     db.collection("fuel_actual_refills").createIndex({ labelDate: 1, registration: 1, filledAt: -1 }),
     db.collection("vehicle_status_snapshots").createIndex({ labelDate: 1, createdAt: 1 }),
     db.collection("driver_daily_audits").createIndex({ labelDate: 1, generatedAt: -1 }),

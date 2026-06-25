@@ -3,6 +3,7 @@ import type { FleetStatusRow } from "./cartrack";
 import type { DailyReport } from "./report";
 import { hashPassword, verifyPassword } from "./auth";
 import { ensureMongoIndexes, getDb } from "./mongodb";
+import { deleteTimedCache } from "./server/timed-cache";
 
 export type ReportDocument = {
   _id?: ObjectId;
@@ -70,6 +71,20 @@ export type FuelRefillEvent = {
   positionDescription: string;
 };
 
+export type FuelDetectedRefillDocument = FuelRefillEvent & {
+  _id?: ObjectId;
+  eventKey: string;
+  labelDate: string;
+  vehicleId: string;
+  status: "detected" | "confirmed" | "dismissed";
+  confidence: "high" | "medium" | "low";
+  sampleCount: number;
+  odometerBefore: number | null;
+  odometerAfter: number | null;
+  detectedAt: Date;
+  updatedAt: Date;
+};
+
 export type ActualFuelRefillDocument = {
   _id?: ObjectId;
   labelDate: string;
@@ -123,6 +138,9 @@ export type FuelReconciliation = {
   actualRefills: ActualFuelRefill[];
   sensorEvent: FuelRefillEvent | null;
 };
+
+const FUEL_REFILL_MIN_INCREASE_LITERS = 10;
+const FUEL_SENSOR_NOISE_TOLERANCE_LITERS = 3;
 
 export type VehicleStatusSnapshotDocument = {
   _id?: ObjectId;
@@ -237,6 +255,7 @@ export async function saveReport(report: DailyReport, sent: boolean): Promise<st
   };
 
   const result = await db.collection<ReportDocument>("reports").insertOne(doc);
+  deleteTimedCache("reports");
   return result.insertedId.toString();
 }
 
@@ -261,6 +280,8 @@ export async function saveFuelSnapshot(labelDate: string, rows: FleetStatusRow[]
   };
 
   await db.collection<FuelSnapshotDocument>("fuel_snapshots").insertOne(doc);
+  await syncDetectedFuelRefills(labelDate);
+  deleteTimedCache(`fuel-summary:${labelDate}`);
   return buildFuelSummary(labelDate);
 }
 
@@ -282,6 +303,7 @@ export async function createActualFuelRefill(input: ActualFuelRefillInput): Prom
   };
 
   const result = await db.collection<ActualFuelRefillDocument>("fuel_actual_refills").insertOne(doc);
+  deleteTimedCache(`fuel-summary:${doc.labelDate}`);
   return serializeActualFuelRefill({ ...doc, _id: result.insertedId });
 }
 
@@ -300,7 +322,11 @@ export async function listActualFuelRefills(labelDate: string): Promise<ActualFu
 export async function deleteActualFuelRefill(id: string): Promise<boolean> {
   await ensureMongoIndexes();
   const db = await getDb();
+  const doc = await db.collection<ActualFuelRefillDocument>("fuel_actual_refills").findOne({ _id: new ObjectId(id) });
   const result = await db.collection<ActualFuelRefillDocument>("fuel_actual_refills").deleteOne({ _id: new ObjectId(id) });
+  if (doc) {
+    deleteTimedCache(`fuel-summary:${doc.labelDate}`);
+  }
   return result.deletedCount > 0;
 }
 
@@ -466,7 +492,7 @@ export async function updateDriverAuditCase(id: string, input: { status?: Driver
 export async function buildFuelSummary(labelDate: string) {
   await ensureMongoIndexes();
   const db = await getDb();
-  const [snapshots, actualRefillDocs] = await Promise.all([
+  const [snapshots, actualRefillDocs, detectedRefillDocs] = await Promise.all([
     db
       .collection<FuelSnapshotDocument>("fuel_snapshots")
       .find({ labelDate })
@@ -476,6 +502,11 @@ export async function buildFuelSummary(labelDate: string) {
       .collection<ActualFuelRefillDocument>("fuel_actual_refills")
       .find({ labelDate })
       .sort({ filledAt: -1, createdAt: -1 })
+      .toArray(),
+    db
+      .collection<FuelDetectedRefillDocument>("fuel_detected_refills")
+      .find({ labelDate, status: { $ne: "dismissed" } })
+      .sort({ refilledLiters: -1, afterTime: -1 })
       .toArray(),
   ]);
 
@@ -500,37 +531,21 @@ export async function buildFuelSummary(labelDate: string) {
     }
   }
 
-  const events: FuelRefillEvent[] = [];
   const vehicles = Array.from(byRegistration.entries()).map(([registration, items]) => {
     const orderedItems = items.sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime());
     let minRow = orderedItems[0];
     let maxIncrease = 0;
     let latest = orderedItems[orderedItems.length - 1];
-    let bestEvent: FuelRefillEvent | null = null;
 
     for (const row of orderedItems.slice(1)) {
       if (row.fuelLevel! < minRow.fuelLevel!) {
         minRow = row;
       }
       const increase = row.fuelLevel! - minRow.fuelLevel!;
-      if (increase >= 5 && increase > maxIncrease) {
+      if (increase >= FUEL_REFILL_MIN_INCREASE_LITERS && increase > maxIncrease) {
         maxIncrease = increase;
-        bestEvent = {
-          registration,
-          driverName: row.driverName || latest.driverName || "-",
-          beforeLiters: minRow.fuelLevel!,
-          afterLiters: row.fuelLevel!,
-          refilledLiters: increase,
-          beforeTime: minRow.recordedAt.toISOString(),
-          afterTime: row.recordedAt.toISOString(),
-          positionDescription: row.positionDescription || "-",
-        };
       }
       latest = row;
-    }
-
-    if (bestEvent) {
-      events.push(bestEvent);
     }
 
     return {
@@ -546,6 +561,10 @@ export async function buildFuelSummary(labelDate: string) {
       positionDescription: latest.positionDescription || "-",
     };
   });
+
+  const detectedEvents = detectedRefillDocs.map(serializeDetectedRefillEvent);
+  const fallbackEvents = detectedEvents.length > 0 ? [] : detectFuelRefillEvents(labelDate, snapshots);
+  const events = detectedEvents.length > 0 ? detectedEvents : fallbackEvents;
 
   events.sort((a, b) => b.refilledLiters - a.refilledLiters);
   vehicles.sort((a, b) => b.estimatedRefillLiters - a.estimatedRefillLiters || a.registration.localeCompare(b.registration));
@@ -564,6 +583,185 @@ export async function buildFuelSummary(labelDate: string) {
     actualRefills,
     reconciliation,
   };
+}
+
+export async function syncDetectedFuelRefills(labelDate: string): Promise<FuelRefillEvent[]> {
+  await ensureMongoIndexes();
+  const db = await getDb();
+  const snapshots = await db
+    .collection<FuelSnapshotDocument>("fuel_snapshots")
+    .find({ labelDate })
+    .sort({ createdAt: 1 })
+    .toArray();
+  const events = detectFuelRefillEvents(labelDate, snapshots);
+  const now = new Date();
+
+  if (events.length === 0) {
+    return [];
+  }
+
+  await Promise.all(
+    events.map((event) =>
+      db.collection<FuelDetectedRefillDocument>("fuel_detected_refills").updateOne(
+        { eventKey: event.eventKey },
+        {
+          $set: {
+            registration: event.registration,
+            vehicleId: event.vehicleId,
+            driverName: event.driverName,
+            beforeLiters: event.beforeLiters,
+            afterLiters: event.afterLiters,
+            refilledLiters: event.refilledLiters,
+            beforeTime: event.beforeTime,
+            afterTime: event.afterTime,
+            positionDescription: event.positionDescription,
+            confidence: event.confidence,
+            sampleCount: event.sampleCount,
+            odometerBefore: event.odometerBefore,
+            odometerAfter: event.odometerAfter,
+            updatedAt: now,
+          },
+          $setOnInsert: {
+            eventKey: event.eventKey,
+            labelDate: event.labelDate,
+            status: "detected",
+            detectedAt: now,
+          },
+        },
+        { upsert: true },
+      ),
+    ),
+  );
+
+  return events.map(serializeDetectedRefillEvent);
+}
+
+function detectFuelRefillEvents(
+  labelDate: string,
+  snapshots: WithId<FuelSnapshotDocument>[],
+): FuelDetectedRefillDocument[] {
+  type FuelSample = FuelSnapshotRow & { recordedAt: Date };
+  type Candidate = {
+    before: FuelSample;
+    after: FuelSample;
+    sampleCount: number;
+  };
+
+  const byRegistration = new Map<string, FuelSample[]>();
+
+  for (const snapshot of snapshots) {
+    const rowsByRegistration = new Map<string, FuelSnapshotRow>();
+    for (const row of snapshot.rows) {
+      if (typeof row.fuelLevel !== "number") {
+        continue;
+      }
+      rowsByRegistration.set(row.registration, row);
+    }
+
+    for (const row of rowsByRegistration.values()) {
+      const samples = byRegistration.get(row.registration) ?? [];
+      samples.push({ ...row, recordedAt: snapshot.createdAt });
+      byRegistration.set(row.registration, samples);
+    }
+  }
+
+  const events: FuelDetectedRefillDocument[] = [];
+
+  for (const [registration, samples] of byRegistration.entries()) {
+    const ordered = samples.sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime());
+    if (ordered.length < 2) {
+      continue;
+    }
+
+    let baseline = ordered[0];
+    let candidate: Candidate | null = null;
+
+    const closeCandidate = () => {
+      if (!candidate) {
+        return;
+      }
+
+      const refilledLiters = round(candidate.after.fuelLevel! - candidate.before.fuelLevel!);
+      if (refilledLiters >= FUEL_REFILL_MIN_INCREASE_LITERS) {
+        const beforeTime = candidate.before.recordedAt.toISOString();
+        const afterTime = candidate.after.recordedAt.toISOString();
+        events.push({
+          eventKey: `${labelDate}:${registration}:${beforeTime}`,
+          labelDate,
+          registration,
+          vehicleId: candidate.after.vehicleId || candidate.before.vehicleId || "-",
+          driverName: candidate.after.driverName || candidate.before.driverName || "-",
+          beforeLiters: round(candidate.before.fuelLevel!),
+          afterLiters: round(candidate.after.fuelLevel!),
+          refilledLiters,
+          beforeTime,
+          afterTime,
+          positionDescription: candidate.after.positionDescription || candidate.before.positionDescription || "-",
+          status: "detected",
+          confidence: getDetectedFuelConfidence(refilledLiters, candidate.sampleCount),
+          sampleCount: candidate.sampleCount,
+          odometerBefore: candidate.before.odometerKm,
+          odometerAfter: candidate.after.odometerKm,
+          detectedAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+
+      candidate = null;
+    };
+
+    for (const sample of ordered.slice(1)) {
+      if (sample.fuelLevel! < baseline.fuelLevel! - FUEL_SENSOR_NOISE_TOLERANCE_LITERS) {
+        closeCandidate();
+        baseline = sample;
+        continue;
+      }
+
+      const increase = sample.fuelLevel! - baseline.fuelLevel!;
+      if (increase >= FUEL_REFILL_MIN_INCREASE_LITERS) {
+        if (!candidate) {
+          candidate = {
+            before: baseline,
+            after: sample,
+            sampleCount: 2,
+          };
+          continue;
+        }
+
+        candidate.sampleCount += 1;
+        if (sample.fuelLevel! > candidate.after.fuelLevel! + FUEL_SENSOR_NOISE_TOLERANCE_LITERS) {
+          candidate.after = sample;
+        }
+      }
+    }
+
+    closeCandidate();
+  }
+
+  return events.sort((a, b) => b.refilledLiters - a.refilledLiters);
+}
+
+function serializeDetectedRefillEvent(doc: FuelDetectedRefillDocument): FuelRefillEvent {
+  return {
+    registration: doc.registration,
+    driverName: doc.driverName,
+    beforeLiters: doc.beforeLiters,
+    afterLiters: doc.afterLiters,
+    refilledLiters: doc.refilledLiters,
+    beforeTime: doc.beforeTime,
+    afterTime: doc.afterTime,
+    positionDescription: doc.positionDescription,
+  };
+}
+
+function getDetectedFuelConfidence(refilledLiters: number, sampleCount: number): FuelDetectedRefillDocument["confidence"] {
+  if (refilledLiters >= 30 && sampleCount >= 2) {
+    return "high";
+  }
+  if (refilledLiters >= 15) {
+    return "medium";
+  }
+  return "low";
 }
 
 function buildFuelReconciliation(

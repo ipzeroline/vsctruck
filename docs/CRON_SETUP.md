@@ -11,19 +11,20 @@
 ## Recommended Schedule
 
 สำหรับงานรถที่เริ่มประมาณ 07:00 ให้เก็บ snapshot ตั้งแต่ 05:00 เพื่อให้มีข้อมูลก่อน `firstIgnitionOn`
+ถ้าต้องจับการเติมน้ำมันให้แม่น ควรใช้ทุก 1 นาทีในช่วงทำงาน เพราะเหตุการณ์เติมอาจเกิดและจบภายในไม่กี่นาที
 
 ```cron
 SHELL=/bin/sh
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
-# เก็บ snapshot ทุก 5 นาที ช่วง 05:00-20:59
-*/5 5-20 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
+# เก็บ snapshot ทุก 1 นาที ช่วง 05:00-20:59
+* 5-20 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
 
 # ส่งรายงาน Telegram ทุกวัน 18:00
 0 18 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-daily-report.sh
 ```
 
-ถ้ารถเริ่มออกก่อน 06:00 ให้ขยายเป็น `*/5 4-20 * * *`
+ถ้ารถเริ่มออกก่อน 06:00 ให้ขยายเป็น `* 4-20 * * *`
 
 ## Install On macOS
 
@@ -73,7 +74,7 @@ npm run cron:install:production
 คำสั่งนี้จะติดตั้ง block นี้ใน `crontab` โดยอัตโนมัติ:
 
 ```cron
-*/5 5-20 * * * curl -fsS -X POST "https://vsctruck.com/api/audit?secret=..."
+* 5-20 * * * curl -fsS -X POST "https://vsctruck.com/api/audit?secret=..."
 0 18 * * * curl -fsS -X POST "https://vsctruck.com/api/report/run?send=1&secret=..."
 ```
 
@@ -116,4 +117,19 @@ curl -i -sS -X POST "https://vsctruck.com/api/audit?secret=${REPORT_CRON_SECRET}
 - Low confidence: มี snapshot หลังสตาร์ทเท่านั้น
 - No data: ไม่มี snapshot ของทะเบียนนั้นในวันนั้น
 
-สำหรับรถ `0704777` ที่เติมจริงเกือบ 100 ลิตร แต่ sensor เห็นเพิ่ม 6 ลิตร สาเหตุคือ snapshot เริ่มหลังเหตุการณ์สำคัญไปแล้ว cron ทุก 5 นาทีตั้งแต่ก่อนเริ่มงานจะทำให้ระบบจับช่วงก่อนเติม/ก่อนสตาร์ทได้แม่นขึ้น
+สำหรับรถ `0704777` ที่เติมจริงเกือบ 100 ลิตร แต่ sensor เห็นเพิ่ม 6 ลิตร สาเหตุคือ snapshot เริ่มหลังเหตุการณ์สำคัญไปแล้ว cron ทุก 1 นาทีตั้งแต่ก่อนเริ่มงานจะทำให้ระบบจับช่วงก่อนเติม/ก่อนสตาร์ทได้แม่นขึ้น
+
+## Fuel Storage Model
+
+ระบบเก็บข้อมูลน้ำมันเป็น 3 ระดับ:
+
+- `fuel_snapshots`: ข้อมูลดิบจาก Cartrack ทุกครั้งที่ cron ยิง เช่น น้ำมันคงเหลือ, เวลา, ทะเบียน, คนขับ, odometer, ตำแหน่ง
+- `fuel_detected_refills`: เหตุการณ์เติมน้ำมันที่ระบบตรวจพบจาก sensor เช่น ก่อนเติม 50 ลิตร หลังเติม 150 ลิตร เพิ่มขึ้น 100 ลิตร
+- `fuel_actual_refills`: ยอดเติมจริงจากใบเสร็จหรือคนกรอก เพื่อเทียบกับ sensor
+
+กติกาตรวจเติมจาก sensor:
+
+- ต้องมี fuel level เพิ่มขึ้นอย่างน้อย `10 ลิตร`
+- ยอมให้ sensor แกว่งได้ `3 ลิตร`
+- ใช้ `eventKey = labelDate + registration + beforeTime` เพื่อป้องกัน cron สร้างข้อมูลซ้ำ
+- ถ้า cron ยิงซ้ำระหว่างเติม ระบบจะ update event เดิม ไม่ insert ซ้ำ
