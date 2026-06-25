@@ -115,7 +115,13 @@ export async function buildDailyReport(): Promise<DailyReport> {
     }),
   );
 
-  const validRows = rows.filter((row): row is NonNullable<typeof row> => Boolean(row));
+  const validRows = rows.filter((row): row is NonNullable<typeof row> => {
+    if (!row) {
+      return false;
+    }
+
+    return hasReportableVehicleData(row);
+  });
   const totalDistance = validRows.reduce((sum, row) => sum + (row.distanceKm ?? 0), 0);
   const totalFuel = validRows.reduce((sum, row) => sum + (row.fuelUsedLiters ?? 0), 0);
   const fuelAvailableCount = validRows.filter((row) => typeof row.fuelUsedLiters === "number").length;
@@ -156,6 +162,16 @@ export async function buildDailyReport(): Promise<DailyReport> {
 
 function firstKnownName(...names: string[]): string {
   return names.find((name) => name && name !== "-") ?? "-";
+}
+
+function hasReportableVehicleData(row: DailyReportRow): boolean {
+  const hasDistance = typeof row.distanceKm === "number" && row.distanceKm > 0;
+  const hasFuel = typeof row.fuelUsedLiters === "number";
+  const hasIgnition = Boolean(
+    (row.firstIgnitionOn && row.firstIgnitionOn !== "-") || (row.lastIgnitionOff && row.lastIgnitionOff !== "-"),
+  );
+
+  return hasDistance || hasFuel || hasIgnition;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
