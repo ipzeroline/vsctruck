@@ -13,15 +13,22 @@ import {
 import { buildDailyReport } from "@/lib/report";
 import { getBangkokReportWindow } from "@/lib/time";
 import { saveReport } from "@/lib/repositories";
+import { deleteTimedCache, getTimedCache } from "@/lib/server/timed-cache";
 
 export const runtime = "nodejs";
+const AUDIT_CACHE_TTL_MS = 15_000;
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
     const labelDate = searchParams.get("labelDate") ?? undefined;
-    const audit = await getLatestDriverDailyAudit(labelDate);
-    return NextResponse.json({ ok: true, audit });
+    const { value, hit } = await getTimedCache(`driver-audit:${labelDate ?? "latest"}`, AUDIT_CACHE_TTL_MS, () =>
+      getLatestDriverDailyAudit(labelDate),
+    );
+    const response = NextResponse.json({ ok: true, audit: value });
+    response.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=15");
+    response.headers.set("X-VSC-Cache", hit ? "HIT" : "MISS");
+    return response;
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : "Unknown error" },
@@ -61,6 +68,7 @@ export async function POST(request: NextRequest) {
 
     stage = "build_driver_daily_audit";
     const audit = await buildDriverDailyAudit(window.labelDate);
+    deleteTimedCache("driver-audit");
     return NextResponse.json({
       ok: true,
       reportId,
@@ -103,6 +111,7 @@ export async function PATCH(request: Request) {
     if (!item) {
       return NextResponse.json({ ok: false, message: "Case not found" }, { status: 404 });
     }
+    deleteTimedCache("driver-audit");
     return NextResponse.json({ ok: true, case: item });
   } catch (error) {
     return NextResponse.json(

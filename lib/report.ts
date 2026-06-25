@@ -182,16 +182,19 @@ function buildTelegramReportText(
     missingFuelCount > 0 ? `รถไม่มีข้อมูลน้ำมัน: ${missingFuelCount} คัน` : "ข้อมูลน้ำมันครบทุกคันที่รายงาน",
     "━━━━━━━━━━━━━━━━━━━━",
     "รายละเอียดรายคัน",
-    ...sortedRows.map((row, index) =>
-      [
-        `${index + 1}. ${row.registration} | ${row.driverName}`,
-        `   เวลา: ${formatReportTime(row.firstIgnitionOn)} - ${formatReportTime(row.lastIgnitionOff)}`,
-        `   ระยะทาง: ${formatNumber(row.distanceKm)} กม. | น้ำมัน: ${formatFuel(row.fuelUsedLiters)}`,
-        `   ประสิทธิภาพ: ${formatEfficiency(row)}`,
-      ].join("\n"),
-    ),
+    sortedRows.map((row, index) => formatTelegramVehicleRow(row, index)).join("\n\n"),
     "━━━━━━━━━━━━━━━━━━━━",
     "หมายเหตุ: รายงานนี้แสดงเฉพาะรถที่มีข้อมูลการใช้งานจริงในรอบวัน",
+  ].join("\n");
+}
+
+function formatTelegramVehicleRow(row: DailyReportRow, index: number) {
+  return [
+    `${index + 1}. ${row.registration} | ${row.driverName}`,
+    `   เวลา: ${formatReportTime(row.firstIgnitionOn)} - ${formatReportTime(row.lastIgnitionOff)}`,
+    `   ระยะทาง: ${formatNumber(row.distanceKm)} กม.`,
+    `   น้ำมัน: ${formatFuel(row.fuelUsedLiters)}`,
+    `   ประสิทธิภาพ: ${formatEfficiency(row)}`,
   ].join("\n");
 }
 

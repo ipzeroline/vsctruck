@@ -10,6 +10,11 @@ export type AppConfig = {
   reportMaxVehicles: number;
   mongodbUri: string;
   mongodbDb: string;
+  mongodbRetentionRawSnapshotDays: number;
+  mongodbRetentionDetectedFuelDays: number;
+  mongodbRetentionReportDays: number;
+  mongodbRetentionAuditDays: number;
+  mongodbRetentionActualFuelDays: number;
 };
 
 export function getConfig(): AppConfig {
@@ -25,6 +30,11 @@ export function getConfig(): AppConfig {
     reportMaxVehicles: Number(process.env.REPORT_MAX_VEHICLES ?? 100),
     mongodbUri: requireEnv("MONGODB_URI"),
     mongodbDb: process.env.MONGODB_DB ?? "vscbot",
+    mongodbRetentionRawSnapshotDays: readPositiveNumber("MONGODB_RETENTION_RAW_SNAPSHOT_DAYS", 90),
+    mongodbRetentionDetectedFuelDays: readPositiveNumber("MONGODB_RETENTION_DETECTED_FUEL_DAYS", 730),
+    mongodbRetentionReportDays: readPositiveNumber("MONGODB_RETENTION_REPORT_DAYS", 730),
+    mongodbRetentionAuditDays: readPositiveNumber("MONGODB_RETENTION_AUDIT_DAYS", 1095),
+    mongodbRetentionActualFuelDays: readPositiveNumber("MONGODB_RETENTION_ACTUAL_FUEL_DAYS", 1095),
   };
 }
 
@@ -40,6 +50,11 @@ function requireEnv(name: string): string {
     throw new Error(`Missing ${name} in environment`);
   }
   return value;
+}
+
+function readPositiveNumber(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function trimSlash(value: string) {

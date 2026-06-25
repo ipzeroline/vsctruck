@@ -56,22 +56,61 @@ export async function ensureMongoIndexes(): Promise<void> {
 
 async function createMongoIndexes(): Promise<void> {
   const db = await getDb();
+  const config = getConfig();
 
   await Promise.all([
     db.collection("reports").createIndex({ createdAt: -1 }),
     db.collection("reports").createIndex({ "window.labelDate": 1, createdAt: -1 }),
+    db.collection("reports").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: daysToSeconds(config.mongodbRetentionReportDays), name: "ttl_reports_createdAt" },
+    ),
     db.collection("fuel_snapshots").createIndex({ labelDate: 1, createdAt: 1 }),
+    db.collection("fuel_snapshots").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: daysToSeconds(config.mongodbRetentionRawSnapshotDays), name: "ttl_fuel_snapshots_createdAt" },
+    ),
     db.collection("fuel_detected_refills").createIndex({ eventKey: 1 }, { unique: true }),
     db.collection("fuel_detected_refills").createIndex({ labelDate: 1, registration: 1, afterTime: -1 }),
     db.collection("fuel_detected_refills").createIndex({ labelDate: 1, status: 1, refilledLiters: -1 }),
+    db.collection("fuel_detected_refills").createIndex(
+      { detectedAt: 1 },
+      {
+        expireAfterSeconds: daysToSeconds(config.mongodbRetentionDetectedFuelDays),
+        name: "ttl_fuel_detected_refills_detectedAt",
+      },
+    ),
     db.collection("fuel_actual_refills").createIndex({ labelDate: 1, registration: 1, filledAt: -1 }),
+    db.collection("fuel_actual_refills").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: daysToSeconds(config.mongodbRetentionActualFuelDays), name: "ttl_fuel_actual_refills_createdAt" },
+    ),
     db.collection("vehicle_status_snapshots").createIndex({ labelDate: 1, createdAt: 1 }),
+    db.collection("vehicle_status_snapshots").createIndex(
+      { createdAt: 1 },
+      {
+        expireAfterSeconds: daysToSeconds(config.mongodbRetentionRawSnapshotDays),
+        name: "ttl_vehicle_status_snapshots_createdAt",
+      },
+    ),
     db.collection("driver_daily_audits").createIndex({ labelDate: 1, generatedAt: -1 }),
+    db.collection("driver_daily_audits").createIndex(
+      { generatedAt: 1 },
+      { expireAfterSeconds: daysToSeconds(config.mongodbRetentionAuditDays), name: "ttl_driver_daily_audits_generatedAt" },
+    ),
     db.collection("driver_audit_cases").createIndex({ caseKey: 1 }, { unique: true }),
     db.collection("driver_audit_cases").createIndex({ labelDate: 1, status: 1, severity: 1 }),
     db.collection("driver_audit_cases").createIndex({ driverName: 1, createdAt: -1 }),
+    db.collection("driver_audit_cases").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: daysToSeconds(config.mongodbRetentionAuditDays), name: "ttl_driver_audit_cases_createdAt" },
+    ),
     db.collection("staff").createIndex({ email: 1 }, { unique: true, sparse: true }),
     db.collection("staff").createIndex({ username: 1 }, { unique: true, sparse: true }),
     db.collection("staff").createIndex({ status: 1, role: 1 }),
   ]);
+}
+
+function daysToSeconds(days: number): number {
+  return Math.round(days * 24 * 60 * 60);
 }

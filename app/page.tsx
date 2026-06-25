@@ -78,6 +78,11 @@ type ApiResult = {
 type FleetStatusResult = {
   ok: boolean;
   message?: string;
+  source?: "live" | "snapshot";
+  fallback?: boolean;
+  fallbackReason?: string;
+  snapshotCreatedAt?: string;
+  snapshotLabelDate?: string;
   rows?: FleetStatusRow[];
   summary?: {
     total: number;
@@ -333,6 +338,13 @@ type DashboardView =
   | "reportArchive"
   | "staff";
 
+const DAILY_REPORT_VIEWS: DashboardView[] = ["overview", "vehicles", "telegram", "reportDistance", "reportFuel"];
+const FLEET_STATUS_VIEWS: DashboardView[] = ["overview", "live", "map", "fuel"];
+const CRON_STATUS_VIEWS: DashboardView[] = ["overview"];
+const REPORT_LIST_VIEWS: DashboardView[] = ["overview", "reports", "reportArchive"];
+const FUEL_TODAY_VIEWS: DashboardView[] = ["overview", "fuel", "reports", "reportRefuel"];
+const DRIVER_AUDIT_VIEWS: DashboardView[] = ["overview", "audit", "reports", "reportOvernightFuel"];
+
 const sampleRows: ReportRow[] = [
   {
     registration: "รอข้อมูล",
@@ -358,6 +370,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   const [mapRows, setMapRows] = useState<FleetStatusRow[]>([]);
   const [mapSummary, setMapSummary] = useState<FleetStatusResult["summary"]>();
   const [mapError, setMapError] = useState<string | undefined>();
+  const [mapFallback, setMapFallback] = useState<FleetStatusResult | undefined>();
   const [fuelError, setFuelError] = useState<string | undefined>();
   const [auditError, setAuditError] = useState<string | undefined>();
   const [fuelToday, setFuelToday] = useState<FuelTodayResult>();
@@ -393,9 +406,18 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     report: "กดพรีวิวรายงานเพื่อดึงข้อมูลล่าสุดจาก Cartrack",
   });
 
+  const needsDailyReportPreview = DAILY_REPORT_VIEWS.includes(view);
+  const needsFleetStatus = FLEET_STATUS_VIEWS.includes(view);
+  const needsCronStatus = CRON_STATUS_VIEWS.includes(view);
+  const needsReportList = REPORT_LIST_VIEWS.includes(view);
+  const needsFuelToday = FUEL_TODAY_VIEWS.includes(view);
+  const needsDriverAudit = DRIVER_AUDIT_VIEWS.includes(view);
   const rows = state.data?.rows?.length ? state.data.rows : sampleRows;
   const summary = state.data?.summary;
-  const health = useMemo(() => getHealth(state.status), [state.status]);
+  const health = useMemo(
+    () => getHealth(needsDailyReportPreview ? state.status : "idle"),
+    [needsDailyReportPreview, state.status],
+  );
   const visibleMapRows = mapRows.slice(0, 8);
   const auditSummary = useMemo(() => buildAuditSummary(rows, fuelToday), [rows, fuelToday]);
   const liveSummary = mapSummary ?? {
@@ -418,14 +440,22 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       return;
     }
     didAutoLoad.current = true;
-    void run(false);
-    void loadFleetStatus();
-    void loadCronStatus();
-    void loadReports();
-    if (["overview", "fuel", "reports", "reportRefuel"].includes(view)) {
+    if (needsDailyReportPreview) {
+      void loadLatestReport();
+    }
+    if (needsFleetStatus) {
+      void loadFleetStatus();
+    }
+    if (needsCronStatus) {
+      void loadCronStatus();
+    }
+    if (needsReportList) {
+      void loadReports();
+    }
+    if (needsFuelToday) {
       void loadFuelToday(false);
     }
-    if (["overview", "audit", "reports", "reportOvernightFuel"].includes(view)) {
+    if (needsDriverAudit) {
       void loadDriverAudit();
     }
     if (view === "staff") {
@@ -434,15 +464,19 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   }, []);
 
   useEffect(() => {
-    if (!["overview", "live", "map", "fuel"].includes(view)) {
+    if (!needsFleetStatus && !needsCronStatus) {
       return;
     }
     const interval = window.setInterval(() => {
-      void loadFleetStatus();
-      void loadCronStatus();
+      if (needsFleetStatus) {
+        void loadFleetStatus();
+      }
+      if (needsCronStatus) {
+        void loadCronStatus();
+      }
     }, 60000);
     return () => window.clearInterval(interval);
-  }, [view]);
+  }, [needsCronStatus, needsFleetStatus]);
 
   async function loadFleetStatus() {
     setMapLoading(true);
@@ -459,8 +493,10 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       }
       setMapRows(data.rows ?? []);
       setMapSummary(data.summary);
+      setMapFallback(data.fallback ? data : undefined);
     } catch (error) {
       setMapError(error instanceof Error ? error.message : "โหลดตำแหน่งรถไม่สำเร็จ");
+      setMapFallback(undefined);
     } finally {
       setMapLoading(false);
     }
@@ -523,6 +559,40 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       });
     } finally {
       setLoading(null);
+    }
+  }
+
+  async function loadLatestReport() {
+    try {
+      const response = await fetch("/api/reports?latest=1");
+      const data = (await response.json()) as {
+        ok: boolean;
+        latest?: (ApiResult & { id: string; createdAt: string; text?: string }) | null;
+        message?: string;
+      };
+
+      if (!response.ok || !data.ok || !data.latest) {
+        return;
+      }
+
+      const latestReport: ApiResult = {
+        ok: true,
+        sent: data.latest.sent,
+        report: data.latest.text ?? data.latest.report ?? "",
+        vehicleCount: data.latest.vehicleCount,
+        fuelAvailableCount: data.latest.fuelAvailableCount,
+        summary: data.latest.summary,
+        window: data.latest.window,
+        rows: data.latest.rows,
+      };
+
+      setState({
+        status: "ready",
+        report: latestReport.report ?? "โหลดรายงานล่าสุดจาก MongoDB สำเร็จ",
+        data: latestReport,
+      });
+    } catch {
+      // Keep cached-report failures silent. Manual preview still reports actionable Cartrack errors.
     }
   }
 
@@ -880,7 +950,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           </div>
         </header>
 
-        {state.error ? (
+        {needsDailyReportPreview && state.error ? (
           <section className="alert-panel" role="alert">
             <AlertCircle size={20} aria-hidden="true" />
             <div>
@@ -891,31 +961,82 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           </section>
         ) : null}
 
+        {needsFleetStatus && mapFallback ? (
+          <section className="info-panel live-fallback-panel">
+            <Database size={18} aria-hidden="true" />
+            <div>
+              <strong>ใช้ข้อมูลล่าสุดจาก MongoDB แทนข้อมูลสด</strong>
+              <span>
+                Snapshot ล่าสุด {mapFallback.snapshotCreatedAt ? formatDateTime(mapFallback.snapshotCreatedAt) : "-"}
+                {mapFallback.fallbackReason ? ` · สาเหตุ: ${mapFallback.fallbackReason}` : ""}
+              </span>
+            </div>
+          </section>
+        ) : null}
+
         <section className="toolbar">
           <div className="toolbar-meta">
             <CalendarClock size={18} aria-hidden="true" />
             <div>
-              <span>Report window</span>
+              <span>
+                {needsDailyReportPreview
+                  ? "Report window"
+                  : needsFuelToday
+                    ? "Fuel snapshot window"
+                    : needsDriverAudit
+                      ? "Audit window"
+                      : "Workspace"}
+              </span>
               <strong>
-                {state.data?.window
+                {needsDailyReportPreview && state.data?.window
                   ? `${state.data.window.startTimestamp} - ${state.data.window.endTimestamp}`
-                  : "รอพรีวิวรายงาน"}
+                  : needsFuelToday && fuelToday?.window
+                    ? `${fuelToday.window.startTimestamp} - ${fuelToday.window.endTimestamp}`
+                    : needsDriverAudit && driverAudit
+                      ? `${driverAudit.labelDate} · ${formatDateTime(driverAudit.generatedAt)}`
+                      : needsDailyReportPreview
+                        ? "กำลังโหลดรายงานล่าสุด"
+                        : "กำลังโหลดข้อมูลล่าสุด"}
               </strong>
             </div>
           </div>
           <div className="actions">
-            <button className="button secondary" disabled={loading !== null} onClick={() => run(false)}>
-              {loading === "preview" ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
-              พรีวิวรายงาน
-            </button>
-            <button className="button secondary" disabled={mapLoading} onClick={() => loadFleetStatus()}>
-              {mapLoading ? <Loader2 className="spin" size={18} /> : <MapPin size={18} />}
-              รีเฟรชตำแหน่ง
-            </button>
-            <button className="button" disabled={loading !== null} onClick={() => run(true)}>
-              {loading === "send" ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-              ส่ง Telegram
-            </button>
+            {needsDailyReportPreview ? (
+              <button className="button secondary" disabled={loading !== null} onClick={() => run(false)}>
+                {loading === "preview" ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+                พรีวิวรายงาน
+              </button>
+            ) : null}
+            {needsFleetStatus ? (
+              <button className="button secondary" disabled={mapLoading} onClick={() => loadFleetStatus()}>
+                {mapLoading ? <Loader2 className="spin" size={18} /> : <MapPin size={18} />}
+                รีเฟรชตำแหน่ง
+              </button>
+            ) : null}
+            {!needsFleetStatus && needsFuelToday ? (
+              <button className="button secondary" disabled={fuelLoading} onClick={() => loadFuelToday(false)}>
+                {fuelLoading ? <Loader2 className="spin" size={18} /> : <Fuel size={18} />}
+                รีเฟรชน้ำมัน
+              </button>
+            ) : null}
+            {!needsFuelToday && needsDriverAudit ? (
+              <button className="button secondary" disabled={auditLoading} onClick={() => loadDriverAudit()}>
+                {auditLoading ? <Loader2 className="spin" size={18} /> : <ShieldCheck size={18} />}
+                รีเฟรช Audit
+              </button>
+            ) : null}
+            {needsReportList && !needsDailyReportPreview ? (
+              <button className="button secondary" disabled={reportsLoading} onClick={() => loadReports()}>
+                {reportsLoading ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
+                รีเฟรชรายงาน
+              </button>
+            ) : null}
+            {needsDailyReportPreview ? (
+              <button className="button" disabled={loading !== null} onClick={() => run(true)}>
+                {loading === "send" ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+                ส่ง Telegram
+              </button>
+            ) : null}
             <button className="button ghost" onClick={logout}>
               <LogOut size={18} />
               ออกจากระบบ

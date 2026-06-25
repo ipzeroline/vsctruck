@@ -411,6 +411,44 @@ export async function saveVehicleStatusSnapshot(labelDate: string, rows: FleetSt
   return doc;
 }
 
+export async function getLatestVehicleStatusSnapshotRows() {
+  await ensureMongoIndexes();
+  const db = await getDb();
+  const snapshot = await db
+    .collection<VehicleStatusSnapshotDocument>("vehicle_status_snapshots")
+    .findOne({}, { sort: { createdAt: -1 } });
+
+  if (!snapshot) {
+    return null;
+  }
+
+  return {
+    createdAt: snapshot.createdAt.toISOString(),
+    labelDate: snapshot.labelDate,
+    rows: snapshot.rows.map((row, index): FleetStatusRow => ({
+      key: `${row.vehicleId || row.registration}:${row.registration}:snapshot:${index}`,
+      registration: row.registration,
+      vehicleId: row.vehicleId,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      driverName: row.driverName,
+      speed: row.speed,
+      ignition: row.ignition,
+      idling: row.idling,
+      bearing: row.bearing,
+      eventTs: row.eventTs,
+      locationUpdated: row.locationUpdated,
+      positionDescription: row.positionDescription,
+      fuelLevel: row.fuelLevel,
+      fuelPercentage: row.fuelPercentage,
+      fuelTotalConsumed: row.fuelTotalConsumed ?? null,
+      fuelUpdated: row.fuelUpdated ?? null,
+      gpsFixType: row.gpsFixType,
+      odometerKm: row.odometerKm,
+    })),
+  };
+}
+
 export async function buildDriverDailyAudit(labelDate: string) {
   await ensureMongoIndexes();
   const db = await getDb();

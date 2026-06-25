@@ -1652,6 +1652,24 @@ h2 {
   line-height: 1.45;
 }
 
+.live-fallback-panel {
+  max-width: 1360px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-inline: auto;
+}
+
+.live-fallback-panel strong,
+.live-fallback-panel span {
+  display: block;
+}
+
+.live-fallback-panel span {
+  margin-top: 2px;
+  color: #9a3412;
+}
+
 .vehicle-list {
   min-height: 0;
   overflow: auto;
