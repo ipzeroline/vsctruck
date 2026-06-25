@@ -19,6 +19,7 @@ import {
   Menu,
   Navigation,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Trash2,
@@ -345,6 +346,17 @@ const REPORT_LIST_VIEWS: DashboardView[] = ["overview", "reports", "reportArchiv
 const FUEL_TODAY_VIEWS: DashboardView[] = ["overview", "fuel", "reports", "reportRefuel"];
 const DRIVER_AUDIT_VIEWS: DashboardView[] = ["overview", "audit", "reports", "reportOvernightFuel"];
 
+function getTodayInputDate(timezone = "Asia/Bangkok") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 const sampleRows: ReportRow[] = [
   {
     registration: "รอข้อมูล",
@@ -361,6 +373,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   const [loading, setLoading] = useState<"preview" | "send" | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mapLoading, setMapLoading] = useState(false);
+  const [reportDataLoading, setReportDataLoading] = useState(false);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [fuelLoading, setFuelLoading] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -374,6 +387,10 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   const [fuelError, setFuelError] = useState<string | undefined>();
   const [auditError, setAuditError] = useState<string | undefined>();
   const [fuelToday, setFuelToday] = useState<FuelTodayResult>();
+  const [selectedFuelDate, setSelectedFuelDate] = useState(() => getTodayInputDate());
+  const [fuelSearch, setFuelSearch] = useState("");
+  const [selectedReportDate, setSelectedReportDate] = useState(() => getTodayInputDate());
+  const [reportSearch, setReportSearch] = useState("");
   const [driverAudit, setDriverAudit] = useState<DriverAuditResult["audit"]>();
   const [cronStatus, setCronStatus] = useState<CronStatusResult["status"]>();
   const [cronStatusLoading, setCronStatusLoading] = useState(false);
@@ -434,6 +451,43 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   const overnightFuelLoss = useMemo(() => buildOvernightFuelLossSummary(driverAudit?.cases ?? []), [driverAudit]);
   const fuelDashboard = useMemo(() => buildFuelDashboard(fuelToday), [fuelToday]);
   const realtimeFuel = useMemo(() => buildRealtimeFuel(mapRows), [mapRows]);
+  const filteredDistanceRows = useMemo(
+    () => filterReportRows(auditSummary.distanceRanking, reportSearch),
+    [auditSummary.distanceRanking, reportSearch],
+  );
+  const filteredFuelRows = useMemo(
+    () => filterReportRows(auditSummary.fuelRanking, reportSearch),
+    [auditSummary.fuelRanking, reportSearch],
+  );
+  const filteredMissingFuelRows = useMemo(
+    () => filterReportRows(auditSummary.missingFuelRows, reportSearch),
+    [auditSummary.missingFuelRows, reportSearch],
+  );
+  const filteredReports = useMemo(() => filterReportList(reports, reportSearch), [reports, reportSearch]);
+  const filteredOvernightCases = useMemo(
+    () => filterOvernightCases(overnightFuelLoss.cases, reportSearch),
+    [overnightFuelLoss.cases, reportSearch],
+  );
+  const filteredRefuelEvents = useMemo(() => {
+    const query = fuelSearch.trim().toLowerCase();
+    if (!query) {
+      return auditSummary.refillEvents;
+    }
+
+    return auditSummary.refillEvents.filter((event) =>
+      [
+        event.registration,
+        event.driverName,
+        event.positionDescription,
+        String(event.refilledLiters),
+        String(event.beforeLiters),
+        String(event.afterLiters),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [auditSummary.refillEvents, fuelSearch]);
 
   useEffect(() => {
     if (didAutoLoad.current) {
@@ -562,9 +616,11 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     }
   }
 
-  async function loadLatestReport() {
+  async function loadLatestReport(date = selectedReportDate) {
+    setReportDataLoading(true);
     try {
-      const response = await fetch("/api/reports?latest=1");
+      const params = new URLSearchParams({ latest: "1", date });
+      const response = await fetch(`/api/reports?${params.toString()}`);
       const data = (await response.json()) as {
         ok: boolean;
         latest?: (ApiResult & { id: string; createdAt: string; text?: string }) | null;
@@ -593,13 +649,16 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       });
     } catch {
       // Keep cached-report failures silent. Manual preview still reports actionable Cartrack errors.
+    } finally {
+      setReportDataLoading(false);
     }
   }
 
-  async function loadReports() {
+  async function loadReports(date = selectedReportDate) {
     setReportsLoading(true);
     try {
-      const response = await fetch("/api/reports?limit=10");
+      const params = new URLSearchParams({ limit: "50", date });
+      const response = await fetch(`/api/reports?${params.toString()}`);
       const data = (await response.json()) as { ok: boolean; reports?: ReportListItem[]; message?: string };
       if (response.ok && data.ok) {
         setReports(data.reports ?? []);
@@ -609,11 +668,15 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     }
   }
 
-  async function loadFuelToday(snapshot = false) {
+  async function loadFuelToday(snapshot = false, date = selectedFuelDate) {
     setFuelLoading(true);
     setFuelError(undefined);
     try {
-      const response = await fetch(`/api/fuel/today?snapshot=${snapshot ? "1" : "0"}`);
+      const params = new URLSearchParams({
+        snapshot: snapshot ? "1" : "0",
+        date,
+      });
+      const response = await fetch(`/api/fuel/today?${params.toString()}`);
       const data = (await response.json()) as FuelTodayResult;
       if (!response.ok || !data.ok) {
         setFuelError(data.message ?? "โหลดข้อมูลเติมน้ำมันไม่สำเร็จ");
@@ -707,11 +770,11 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     });
   }
 
-  async function loadDriverAudit() {
+  async function loadDriverAudit(date = selectedReportDate) {
     setAuditLoading(true);
     setAuditError(undefined);
     try {
-      const response = await fetch("/api/audit");
+      const response = await fetch(`/api/audit?date=${encodeURIComponent(date)}`);
       const data = (await response.json()) as DriverAuditResult;
       if (!response.ok || !data.ok) {
         setAuditError(data.message ?? "โหลด Driver Audit ไม่สำเร็จ");
@@ -722,6 +785,21 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       setAuditError(error instanceof Error ? error.message : "โหลด Driver Audit ไม่สำเร็จ");
     } finally {
       setAuditLoading(false);
+    }
+  }
+
+  async function loadReportFilters() {
+    if (needsDailyReportPreview) {
+      await loadLatestReport(selectedReportDate);
+    }
+    if (needsReportList) {
+      await loadReports(selectedReportDate);
+    }
+    if (view === "reports") {
+      await Promise.all([loadFuelToday(false, selectedReportDate), loadDriverAudit(selectedReportDate)]);
+    }
+    if (view === "reportOvernightFuel") {
+      await loadDriverAudit(selectedReportDate);
     }
   }
 
@@ -1236,6 +1314,20 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
               <div className="empty-state">ยังไม่มี Driver Audit กด “สร้าง Audit เต็ม” เพื่อเก็บ snapshot และคำนวณคะแนน</div>
             ) : (
               <>
+                <div className="audit-hero-panel">
+                  <div>
+                    <span>คะแนนเฉลี่ยทั้งทีม</span>
+                    <strong>{driverAudit.summary.averageScore}</strong>
+                    <small>จาก 100 คะแนน · {driverAudit.summary.driverCount} คนขับ</small>
+                  </div>
+                  <div className="audit-hero-grid">
+                    <span><b>{driverAudit.summary.openCaseCount}</b> เคสเปิด</span>
+                    <span><b>{driverAudit.summary.criticalCount + driverAudit.summary.highCount}</b> เคสเร่งด่วน</span>
+                    <span><b>{driverAudit.dataQuality.missingDriverCount}</b> ไม่มีคนขับ</span>
+                    <span><b>{driverAudit.dataQuality.staleGpsCount}</b> GPS stale</span>
+                  </div>
+                </div>
+
                 <div className="audit-command-strip">
                   <AuditCard title="คะแนนเฉลี่ย" value={`${driverAudit.summary.averageScore}/100`} detail={`${driverAudit.summary.driverCount} คนขับ`} icon={<Gauge size={18} />} tone="orange" />
                   <AuditCard title="เคสเปิด" value={`${driverAudit.summary.openCaseCount}`} detail={`${driverAudit.summary.caseCount} เคสทั้งหมด`} icon={<AlertCircle size={18} />} />
@@ -1270,6 +1362,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                                 <span>{driver.grade}</span>
                               </div>
                             </div>
+                            <div className="driver-grade-note">{getDriverGradeLabel(driver.grade)}</div>
                             <div className="driver-score-metrics">
                               <span>ระยะทาง <b>{formatNumber(driver.distanceKm)} กม.</b></span>
                               <span>น้ำมัน <b>{formatNumber(driver.fuelUsedLiters)} ลิตร</b></span>
@@ -1316,6 +1409,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                     </div>
                   </div>
                 </div>
+                <DriverScoreGuide />
               </>
             )}
           </section>
@@ -1742,12 +1836,21 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Staff audit report</p>
-                <h2>สรุปตรวจสอบพนักงานวันนี้</h2>
+                <h2>สรุปตรวจสอบพนักงาน</h2>
               </div>
               <button className="icon-action" onClick={() => loadFuelToday(false)} disabled={fuelLoading}>
                 {fuelLoading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
               </button>
             </div>
+            <ReportFilterBar
+              date={selectedReportDate}
+              search={reportSearch}
+              loading={reportDataLoading || reportsLoading || fuelLoading || auditLoading}
+              searchPlaceholder="ทะเบียน, คนขับ, วันที่, ระยะทาง, น้ำมัน"
+              onDateChange={setSelectedReportDate}
+              onSearchChange={setReportSearch}
+              onLoad={() => void loadReportFilters()}
+            />
 
             {fuelError ? <div className="map-error">{fuelError}</div> : null}
 
@@ -1786,8 +1889,8 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
             </div>
 
             <div className="audit-grid">
-              <AuditList title="อันดับระยะทางวันนี้" rows={auditSummary.distanceRanking} valueKey="distanceKm" suffix="กม." />
-              <AuditList title="อันดับใช้น้ำมันวันนี้" rows={auditSummary.fuelRanking} valueKey="fuelUsedLiters" suffix="ลิตร" />
+              <AuditList title="อันดับระยะทาง" rows={filteredDistanceRows} valueKey="distanceKm" suffix="กม." />
+              <AuditList title="อันดับใช้น้ำมัน" rows={filteredFuelRows} valueKey="fuelUsedLiters" suffix="ลิตร" />
               <div>
                 <h2 className="section-title">ระดับน้ำมันเพิ่มขึ้นวันนี้</h2>
                 <div className="report-list">
@@ -1818,11 +1921,20 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <section className="panel report-detail-panel">
             <ReportDetailHeading
               eyebrow="Distance audit"
-              title="รายงานระยะทางวันนี้"
+              title="รายงานระยะทาง"
               description="เรียงลำดับรถที่วิ่งมากที่สุดถึงน้อยที่สุด พร้อมคนขับ เวลาเริ่มงาน เวลาดับเครื่อง และน้ำมันที่ใช้"
             />
+            <ReportFilterBar
+              date={selectedReportDate}
+              search={reportSearch}
+              loading={reportDataLoading}
+              searchPlaceholder="ทะเบียน, คนขับ, วันที่, เวลา, กม."
+              onDateChange={setSelectedReportDate}
+              onSearchChange={setReportSearch}
+              onLoad={() => void loadLatestReport(selectedReportDate)}
+            />
             <div className="audit-kpi-grid compact">
-              <AuditCard title="ระยะทางรวม" value={`${formatNumber(summary?.totalDistanceKm ?? 0)} กม.`} detail={`${auditSummary.distanceRanking.length} คันมีข้อมูล`} icon={<Gauge size={18} />} tone="orange" />
+              <AuditCard title="ระยะทางรวม" value={`${formatNumber(summary?.totalDistanceKm ?? 0)} กม.`} detail={`${filteredDistanceRows.length}/${auditSummary.distanceRanking.length} คันที่แสดง`} icon={<Gauge size={18} />} tone="orange" />
               <AuditCard title="วิ่งมากสุด" value={auditSummary.maxDistance ? `${formatNumber(auditSummary.maxDistance.distanceKm ?? 0)} กม.` : "-"} detail={auditSummary.maxDistance ? `${auditSummary.maxDistance.registration} · ${auditSummary.maxDistance.driverName}` : "ยังไม่มีข้อมูล"} icon={<Truck size={18} />} />
               <AuditCard title="วิ่งน้อยสุด" value={auditSummary.minDistance ? `${formatNumber(auditSummary.minDistance.distanceKm ?? 0)} กม.` : "-"} detail={auditSummary.minDistance ? `${auditSummary.minDistance.registration} · ${auditSummary.minDistance.driverName}` : "ยังไม่มีข้อมูล"} icon={<Truck size={18} />} />
               <AuditCard title="ค่าเฉลี่ยต่อคัน" value={`${formatNumber(average(auditSummary.distanceRanking.map((row) => row.distanceKm ?? 0)))} กม.`} detail="เฉพาะรถที่มีข้อมูลระยะทาง" icon={<Activity size={18} />} />
@@ -1843,7 +1955,9 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {auditSummary.distanceRanking.map((row, index) => (
+                  {filteredDistanceRows.length === 0 ? (
+                    <tr><td colSpan={9}>ไม่พบข้อมูลระยะทางในวันที่หรือคำค้นหาที่เลือก</td></tr>
+                  ) : filteredDistanceRows.map((row, index) => (
                     <tr key={`distance-${row.registration}-${index}`}>
                       <td><span className="rank small">{index + 1}</span></td>
                       <td><strong>{row.registration}</strong></td>
@@ -1866,11 +1980,20 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <section className="panel report-detail-panel">
             <ReportDetailHeading
               eyebrow="Fuel usage audit"
-              title="รายงานการใช้น้ำมันวันนี้"
+              title="รายงานการใช้น้ำมัน"
               description="เปรียบเทียบการใช้น้ำมันของแต่ละคัน พร้อมระยะทางและอัตราสิ้นเปลืองโดยประมาณ เพื่อช่วยตรวจสอบความผิดปกติ"
             />
+            <ReportFilterBar
+              date={selectedReportDate}
+              search={reportSearch}
+              loading={reportDataLoading}
+              searchPlaceholder="ทะเบียน, คนขับ, ลิตร, ลิตร/100 กม."
+              onDateChange={setSelectedReportDate}
+              onSearchChange={setReportSearch}
+              onLoad={() => void loadLatestReport(selectedReportDate)}
+            />
             <div className="audit-kpi-grid compact">
-              <AuditCard title="น้ำมันรวม" value={`${formatNumber(summary?.totalFuelLiters ?? 0)} ลิตร`} detail={`${auditSummary.fuelRanking.length} คันมีข้อมูล sensor`} icon={<Fuel size={18} />} tone="orange" />
+              <AuditCard title="น้ำมันรวม" value={`${formatNumber(summary?.totalFuelLiters ?? 0)} ลิตร`} detail={`${filteredFuelRows.length}/${auditSummary.fuelRanking.length} คันที่แสดง`} icon={<Fuel size={18} />} tone="orange" />
               <AuditCard title="ใช้เยอะสุด" value={auditSummary.maxFuel ? `${formatNumber(auditSummary.maxFuel.fuelUsedLiters ?? 0)} ลิตร` : "-"} detail={auditSummary.maxFuel ? `${auditSummary.maxFuel.registration} · ${auditSummary.maxFuel.driverName}` : "ยังไม่มีข้อมูล"} icon={<Fuel size={18} />} />
               <AuditCard title="ใช้น้อยสุด" value={auditSummary.minFuel ? `${formatNumber(auditSummary.minFuel.fuelUsedLiters ?? 0)} ลิตร` : "-"} detail={auditSummary.minFuel ? `${auditSummary.minFuel.registration} · ${auditSummary.minFuel.driverName}` : "ยังไม่มีข้อมูล"} icon={<Fuel size={18} />} />
               <AuditCard title="ไม่มีข้อมูลน้ำมัน" value={`${summary?.missingFuelCount ?? 0} คัน`} detail="ควรตรวจ sensor/ข้อมูลจากอุปกรณ์" icon={<AlertCircle size={18} />} />
@@ -1890,7 +2013,9 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {auditSummary.fuelRanking.map((row, index) => (
+                  {filteredFuelRows.length === 0 && filteredMissingFuelRows.length === 0 ? (
+                    <tr><td colSpan={8}>ไม่พบข้อมูลน้ำมันในวันที่หรือคำค้นหาที่เลือก</td></tr>
+                  ) : filteredFuelRows.map((row, index) => (
                     <tr key={`fuel-${row.registration}-${index}`}>
                       <td><span className="rank small">{index + 1}</span></td>
                       <td><strong>{row.registration}</strong></td>
@@ -1902,7 +2027,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                       <td>{getFuelAuditNote(row, auditSummary.maxFuel, auditSummary.minFuel)}</td>
                     </tr>
                   ))}
-                  {auditSummary.missingFuelRows.map((row, index) => (
+                  {filteredMissingFuelRows.map((row, index) => (
                     <tr key={`missing-fuel-${row.registration}-${index}`}>
                       <td>-</td>
                       <td><strong>{row.registration}</strong></td>
@@ -1924,15 +2049,41 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <section className="panel report-detail-panel">
             <ReportDetailHeading
               eyebrow="Refuel audit"
-              title="รายงานระดับน้ำมันเพิ่มขึ้นวันนี้"
-              description="แสดงรายการน้ำมันที่เพิ่มขึ้นจาก snapshot วันนี้ พร้อมตำแหน่งและปริมาณก่อน/หลังเพิ่ม"
+              title="รายงานระดับน้ำมันเพิ่มขึ้น"
+              description="เลือกวันที่ย้อนหลังจาก MongoDB และค้นหาตามทะเบียน คนขับ สถานที่ หรือจำนวนลิตรที่เพิ่มขึ้น"
             />
+            <div className="report-filter-bar">
+              <label>
+                <span>วันที่</span>
+                <input
+                  type="date"
+                  value={selectedFuelDate}
+                  onChange={(event) => setSelectedFuelDate(event.target.value)}
+                />
+              </label>
+              <label className="report-search-field">
+                <span>ค้นหา</span>
+                <div>
+                  <Search size={16} aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={fuelSearch}
+                    onChange={(event) => setFuelSearch(event.target.value)}
+                    placeholder="ทะเบียน, คนขับ, สถานที่, ลิตร"
+                  />
+                </div>
+              </label>
+              <button className="button secondary" onClick={() => loadFuelToday(false)} disabled={fuelLoading}>
+                {fuelLoading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+                โหลดข้อมูล
+              </button>
+            </div>
             {fuelError ? <div className="map-error">{fuelError}</div> : null}
             {fuelToday?.note ? <div className="info-panel">{fuelToday.note}</div> : null}
             <div className="audit-kpi-grid compact">
               <AuditCard title="เพิ่มขึ้นรวม" value={`${formatNumber(auditSummary.totalRefilledLiters)} ลิตร`} detail={`${auditSummary.refillCount} รายการจาก snapshot`} icon={<Fuel size={18} />} tone="orange" />
               <AuditCard title="Snapshots" value={`${auditSummary.snapshotCount}`} detail="จำนวนรอบข้อมูลที่เก็บวันนี้" icon={<Database size={18} />} />
-              <AuditCard title="รถที่มี sensor" value={`${fuelToday?.summary?.vehicleCount ?? 0} คัน`} detail="มีข้อมูลระดับน้ำมัน" icon={<Truck size={18} />} />
+              <AuditCard title="ผลค้นหา" value={`${filteredRefuelEvents.length} รายการ`} detail={`จากทั้งหมด ${auditSummary.refillCount} รายการ`} icon={<Search size={18} />} />
               <AuditCard title="วันที่" value={fuelToday?.window?.labelDate ?? "-"} detail="เวลาประเทศไทย" icon={<CalendarClock size={18} />} />
             </div>
             <div className="table-wrap">
@@ -1949,10 +2100,16 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {auditSummary.refillEvents.length === 0 ? (
-                    <tr><td colSpan={7}>ยังไม่พบระดับน้ำมันเพิ่มขึ้นวันนี้</td></tr>
+                  {filteredRefuelEvents.length === 0 ? (
+                    <tr>
+                      <td colSpan={7}>
+                        {auditSummary.refillEvents.length === 0
+                          ? "ยังไม่พบระดับน้ำมันเพิ่มขึ้นในวันที่เลือก"
+                          : "ไม่พบข้อมูลที่ตรงกับคำค้นหา"}
+                      </td>
+                    </tr>
                   ) : (
-                    auditSummary.refillEvents.map((event) => (
+                    filteredRefuelEvents.map((event) => (
                       <tr key={`${event.registration}-${event.afterTime}`}>
                         <td><strong>{event.registration}</strong></td>
                         <td>{event.driverName}</td>
@@ -1977,6 +2134,15 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
               title="รายงานน้ำมันหายข้ามคืน"
               description="ตรวจรถที่น้ำมันลดลงหลังดับเครื่องหรือหลังจบรอบ โดยเทียบ snapshot ล่าสุดของวันก่อนหน้ากับ snapshot แรกของวันนี้"
             />
+            <ReportFilterBar
+              date={selectedReportDate}
+              search={reportSearch}
+              loading={auditLoading}
+              searchPlaceholder="ทะเบียน, คนขับ, ระดับ, ลิตร, สถานที่"
+              onDateChange={setSelectedReportDate}
+              onSearchChange={setReportSearch}
+              onLoad={() => void loadDriverAudit(selectedReportDate)}
+            />
             {auditError ? <div className="map-error">{auditError}</div> : null}
             <div className="actions report-actions">
               <button className="button secondary" onClick={() => loadDriverAudit()} disabled={auditLoading}>
@@ -1990,13 +2156,13 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
             </div>
 
             <div className="audit-kpi-grid compact">
-              <AuditCard title="รถที่พบเคส" value={`${overnightFuelLoss.count} คัน`} detail="น้ำมันลดข้ามคืนผิดปกติ" icon={<AlertCircle size={18} />} tone={overnightFuelLoss.count > 0 ? "red" : "green"} />
+              <AuditCard title="รถที่พบเคส" value={`${filteredOvernightCases.length} คัน`} detail={`จากทั้งหมด ${overnightFuelLoss.count} เคส`} icon={<AlertCircle size={18} />} tone={overnightFuelLoss.count > 0 ? "red" : "green"} />
               <AuditCard title="น้ำมันหายรวม" value={`${formatNumber(overnightFuelLoss.totalLiters)} ลิตร`} detail="รวมเฉพาะเคสเปิดใน Audit ล่าสุด" icon={<Fuel size={18} />} tone="orange" />
               <AuditCard title="Critical" value={`${overnightFuelLoss.criticalCount} เคส`} detail="หาย 30 ลิตรขึ้นไป" icon={<ShieldCheck size={18} />} tone={overnightFuelLoss.criticalCount > 0 ? "red" : undefined} />
               <AuditCard title="อัพเดท Audit" value={driverAudit ? formatDateTime(driverAudit.generatedAt) : "-"} detail={driverAudit?.labelDate ?? "ยังไม่มีข้อมูล"} icon={<Clock3 size={18} />} />
             </div>
 
-            <OvernightFuelLossTable cases={overnightFuelLoss.cases} />
+            <OvernightFuelLossTable cases={filteredOvernightCases} />
           </section>
         ) : null}
 
@@ -2012,11 +2178,20 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                 {reportsLoading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
               </button>
             </div>
+            <ReportFilterBar
+              date={selectedReportDate}
+              search={reportSearch}
+              loading={reportsLoading}
+              searchPlaceholder="วันที่, สถานะ, จำนวนรถ, ระยะทาง, น้ำมัน"
+              onDateChange={setSelectedReportDate}
+              onSearchChange={setReportSearch}
+              onLoad={() => void loadReports(selectedReportDate)}
+            />
             <div className="report-list">
-              {reports.length === 0 ? (
-                <div className="empty-state">ยังไม่มีรายงานย้อนหลัง</div>
+              {filteredReports.length === 0 ? (
+                <div className="empty-state">ไม่พบรายงานย้อนหลังในวันที่หรือคำค้นหาที่เลือก</div>
               ) : (
-                reports.map((report) => (
+                filteredReports.map((report) => (
                   <div className="report-item" key={report.id}>
                     <div>
                       <strong>{report.window.labelDate}</strong>
@@ -2509,6 +2684,51 @@ function AuditCard({
   );
 }
 
+function DriverScoreGuide() {
+  return (
+    <div className="driver-score-guide">
+      <div>
+        <p className="eyebrow">Score guide</p>
+        <h2>อ่านคะแนน Driver Audit อย่างไร</h2>
+        <span>
+          คะแนนเริ่มจาก 100 แล้วระบบหักคะแนนจากความเสี่ยงที่พบในรายงานและ snapshot เช่น เคสผิดปกติ,
+          รถวิ่งแต่ไม่มีคนขับ, วิ่งนอกเวลา, จอดติดเครื่อง, GPS ไม่อัพเดท, fuel sensor ขาด และการใช้น้ำมันผิดปกติ
+        </span>
+      </div>
+      <div className="score-guide-grid">
+        <div className="score-guide-item grade-a">
+          <strong>90-100 A</strong>
+          <span>ปกติหรือมีความเสี่ยงต่ำ เช่น 100 A คือยังไม่พบข้อผิดปกติหลักในข้อมูลชุดนี้</span>
+        </div>
+        <div className="score-guide-item grade-b">
+          <strong>75-89 B</strong>
+          <span>มีประเด็นเล็กน้อย ควรติดตามแต่ยังไม่ใช่เคสเร่งด่วน</span>
+        </div>
+        <div className="score-guide-item grade-c">
+          <strong>60-74 C</strong>
+          <span>มีความเสี่ยงหลายจุด ต้องตรวจพฤติกรรมและคุณภาพข้อมูลเพิ่มเติม</span>
+        </div>
+        <div className="score-guide-item grade-d">
+          <strong>0-59 D</strong>
+          <span>ต้องตรวจทันที เช่น 0 D มักเกิดจากไม่มีข้อมูลคนขับหรือมีเคส/ข้อมูลผิดปกติสะสมจำนวนมาก</span>
+        </div>
+      </div>
+      <div className="score-example-row">
+        <span><b>0 D</b> = เสี่ยงสูง/ข้อมูลผิดปกติมาก ต้องตรวจคนขับและทะเบียนที่เกี่ยวข้องก่อน</span>
+        <span><b>92 A</b> = โดยรวมดี แต่มีคะแนนถูกหักเล็กน้อย เช่น idling หรือเคสเล็ก</span>
+        <span><b>100 A</b> = ไม่พบข้อผิดปกติหลักจากข้อมูลที่ระบบมี</span>
+      </div>
+    </div>
+  );
+}
+
+function getDriverGradeLabel(grade: "A" | "B" | "C" | "D") {
+  if (grade === "A") return "สถานะดี";
+  if (grade === "B") return "ควรติดตาม";
+  if (grade === "C") return "ต้องตรวจสอบ";
+  return "เร่งตรวจ";
+}
+
 function AuditList({
   title,
   rows,
@@ -2616,6 +2836,49 @@ function OvernightFuelLossPanel({
   );
 }
 
+function ReportFilterBar({
+  date,
+  search,
+  loading,
+  searchPlaceholder,
+  onDateChange,
+  onSearchChange,
+  onLoad,
+}: {
+  date: string;
+  search: string;
+  loading: boolean;
+  searchPlaceholder: string;
+  onDateChange: (value: string) => void;
+  onSearchChange: (value: string) => void;
+  onLoad: () => void;
+}) {
+  return (
+    <div className="report-filter-bar">
+      <label>
+        <span>วันที่</span>
+        <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} />
+      </label>
+      <label className="report-search-field">
+        <span>ค้นหา</span>
+        <div>
+          <Search size={16} aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder={searchPlaceholder}
+          />
+        </div>
+      </label>
+      <button className="button secondary" onClick={onLoad} disabled={loading}>
+        {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+        โหลดข้อมูล
+      </button>
+    </div>
+  );
+}
+
 function OvernightFuelLossTable({ cases }: { cases: ReturnType<typeof buildOvernightFuelLossSummary>["cases"] }) {
   return (
     <div className="table-wrap">
@@ -2687,6 +2950,77 @@ function getFuelReconcileTone(status: FuelReconciliation["status"]) {
   if (status === "critical" || status === "actual_only") return "danger";
   if (status === "warning" || status === "sensor_only") return "warning";
   return "ok";
+}
+
+function filterReportRows(rows: ReportRow[], search: string) {
+  const query = search.trim().toLowerCase();
+  if (!query) {
+    return rows;
+  }
+
+  return rows.filter((row) =>
+    [
+      row.registration,
+      row.driverName,
+      row.reportDate,
+      row.firstIgnitionOn,
+      row.lastIgnitionOff,
+      String(row.distanceKm ?? ""),
+      String(row.fuelUsedLiters ?? ""),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
+}
+
+function filterReportList(reports: ReportListItem[], search: string) {
+  const query = search.trim().toLowerCase();
+  if (!query) {
+    return reports;
+  }
+
+  return reports.filter((report) =>
+    [
+      report.window.labelDate,
+      report.window.startTimestamp,
+      report.window.endTimestamp,
+      report.sent ? "ส่งแล้ว sent" : "พรีวิว preview",
+      String(report.vehicleCount),
+      String(report.fuelAvailableCount),
+      String(report.summary.totalDistanceKm),
+      String(report.summary.totalFuelLiters),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
+}
+
+function filterOvernightCases(cases: ReturnType<typeof buildOvernightFuelLossSummary>["cases"], search: string) {
+  const query = search.trim().toLowerCase();
+  if (!query) {
+    return cases;
+  }
+
+  return cases.filter((item) =>
+    [
+      item.registration,
+      item.driverName,
+      item.severity,
+      item.title,
+      item.detail,
+      item.evidence.positionDescription,
+      item.evidence.time,
+      String(item.lossLiters),
+      String(item.evidence.fuelBefore ?? ""),
+      String(item.evidence.fuelAfter ?? ""),
+      String(item.evidence.distanceKm ?? ""),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
 }
 
 function buildAuditSummary(rows: ReportRow[], fuelToday?: FuelTodayResult) {

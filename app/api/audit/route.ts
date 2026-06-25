@@ -21,7 +21,7 @@ const AUDIT_CACHE_TTL_MS = 15_000;
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
-    const labelDate = searchParams.get("labelDate") ?? undefined;
+    const labelDate = normalizeLabelDate(searchParams.get("date"), searchParams.get("labelDate"));
     const { value, hit } = await getTimedCache(`driver-audit:${labelDate ?? "latest"}`, AUDIT_CACHE_TTL_MS, () =>
       getLatestDriverDailyAudit(labelDate),
     );
@@ -35,6 +35,19 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+function normalizeLabelDate(dateParam: string | null, labelDateParam: string | null) {
+  if (labelDateParam && /^\d{2}\/\d{2}\/\d{4}$/.test(labelDateParam)) {
+    return labelDateParam;
+  }
+
+  if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+    const [year, month, day] = dateParam.split("-");
+    return `${day}/${month}/${year}`;
+  }
+
+  return undefined;
 }
 
 export async function POST(request: NextRequest) {

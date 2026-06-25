@@ -4,8 +4,11 @@ import { createStaff, deleteStaff, listStaff, updateStaff, type StaffInput } fro
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const auth = requireRole(request, ["admin"]);
+    if (!auth.ok) return auth.response;
+
     return NextResponse.json({ ok: true, staff: await listStaff() });
   } catch (error) {
     return NextResponse.json(

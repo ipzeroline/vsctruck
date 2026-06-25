@@ -984,13 +984,14 @@ function buildFuelReconciliation(
     });
 }
 
-export async function listReports(limit = 20) {
+export async function listReports(limit = 20, labelDate?: string) {
   await ensureMongoIndexes();
   const db = await getDb();
+  const query = labelDate ? { "window.labelDate": labelDate } : {};
   const docs = await db
     .collection<ReportDocument>("reports")
     .find(
-      {},
+      query,
       {
         projection: {
           text: 0,
@@ -1005,10 +1006,11 @@ export async function listReports(limit = 20) {
   return docs.map(serializeReportListItem);
 }
 
-export async function getLatestReport() {
+export async function getLatestReport(labelDate?: string) {
   await ensureMongoIndexes();
   const db = await getDb();
-  const doc = await db.collection<ReportDocument>("reports").findOne({}, { sort: { createdAt: -1 } });
+  const query = labelDate ? { "window.labelDate": labelDate } : {};
+  const doc = await db.collection<ReportDocument>("reports").findOne(query, { sort: { createdAt: -1 } });
   return doc ? serializeReport(doc) : null;
 }
 
