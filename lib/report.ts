@@ -126,28 +126,15 @@ export async function buildDailyReport(): Promise<DailyReport> {
   const totalFuel = validRows.reduce((sum, row) => sum + (row.fuelUsedLiters ?? 0), 0);
   const fuelAvailableCount = validRows.filter((row) => typeof row.fuelUsedLiters === "number").length;
 
-  const lines = [
-    `สรุปการใช้งานรถประจำวันที่ ${window.labelDate}`,
-    `ช่วงเวลา: ${window.startTimestamp} - ${window.endTimestamp}`,
-    "",
-    `จำนวนรถ: ${validRows.length} คัน`,
-    `ระยะทางรวม: ${formatNumber(totalDistance)} กม.`,
-    `น้ำมันรวม: ${fuelAvailableCount > 0 ? `${formatNumber(totalFuel)} ลิตร` : "ไม่พบข้อมูล fuel sensor"}`,
-    "",
-    ...validRows.map((row, index) =>
-      [
-        `${index + 1}. ทะเบียน: ${row.registration}`,
-        `   คนขับ: ${row.driverName}`,
-        `   วันที่: ${row.reportDate}`,
-        `   สตาร์ท: ${row.firstIgnitionOn ?? "-"} | ดับเครื่องล่าสุดของวัน: ${row.lastIgnitionOff ?? "-"}`,
-        `   ระยะทาง: ${formatNumber(row.distanceKm)} กม.`,
-        `   น้ำมันที่ใช้: ${row.fuelUsedLiters === null ? "ไม่พบข้อมูล" : `${formatNumber(row.fuelUsedLiters)} ลิตร`}`,
-      ].join("\n"),
-    ),
-  ];
-
   return {
-    text: lines.join("\n"),
+    text: buildTelegramReportText(validRows, {
+      labelDate: window.labelDate,
+      startTimestamp: window.startTimestamp,
+      endTimestamp: window.endTimestamp,
+      totalDistance,
+      totalFuel,
+      fuelAvailableCount,
+    }),
     vehicleCount: validRows.length,
     fuelAvailableCount,
     summary: {
@@ -158,6 +145,54 @@ export async function buildDailyReport(): Promise<DailyReport> {
     window,
     rows: validRows,
   };
+}
+
+function buildTelegramReportText(
+  rows: DailyReportRow[],
+  summary: {
+    labelDate: string;
+    startTimestamp: string;
+    endTimestamp: string;
+    totalDistance: number;
+    totalFuel: number;
+    fuelAvailableCount: number;
+  },
+): string {
+  const sortedRows = [...rows].sort((a, b) => (b.distanceKm ?? 0) - (a.distanceKm ?? 0));
+  const missingFuelCount = rows.length - summary.fuelAvailableCount;
+  const averageDistance = rows.length === 0 ? 0 : summary.totalDistance / rows.length;
+  const fuelEfficiency =
+    summary.totalDistance > 0 && summary.fuelAvailableCount > 0
+      ? (summary.totalFuel / summary.totalDistance) * 100
+      : null;
+
+  return [
+    "VSCTruck Daily Fleet Report",
+    `ประจำวันที่ ${summary.labelDate}`,
+    `ช่วงเวลา ${formatTime(summary.startTimestamp)} - ${formatTime(summary.endTimestamp)} น.`,
+    "━━━━━━━━━━━━━━━━━━━━",
+    "สรุปภาพรวม",
+    `รถที่มีข้อมูล: ${rows.length} คัน`,
+    `ระยะทางรวม: ${formatNumber(summary.totalDistance)} กม.`,
+    `ระยะทางเฉลี่ย: ${formatNumber(averageDistance)} กม./คัน`,
+    `น้ำมันรวม: ${
+      summary.fuelAvailableCount > 0 ? `${formatNumber(summary.totalFuel)} ลิตร` : "ไม่พบข้อมูล fuel sensor"
+    }`,
+    `อัตราสิ้นเปลืองเฉลี่ย: ${fuelEfficiency === null ? "-" : `${formatNumber(fuelEfficiency)} ลิตร/100 กม.`}`,
+    missingFuelCount > 0 ? `รถไม่มีข้อมูลน้ำมัน: ${missingFuelCount} คัน` : "ข้อมูลน้ำมันครบทุกคันที่รายงาน",
+    "━━━━━━━━━━━━━━━━━━━━",
+    "รายละเอียดรายคัน",
+    ...sortedRows.map((row, index) =>
+      [
+        `${index + 1}. ${row.registration} | ${row.driverName}`,
+        `   เวลา: ${formatReportTime(row.firstIgnitionOn)} - ${formatReportTime(row.lastIgnitionOff)}`,
+        `   ระยะทาง: ${formatNumber(row.distanceKm)} กม. | น้ำมัน: ${formatFuel(row.fuelUsedLiters)}`,
+        `   ประสิทธิภาพ: ${formatEfficiency(row)}`,
+      ].join("\n"),
+    ),
+    "━━━━━━━━━━━━━━━━━━━━",
+    "หมายเหตุ: รายงานนี้แสดงเฉพาะรถที่มีข้อมูลการใช้งานจริงในรอบวัน",
+  ].join("\n");
 }
 
 function firstKnownName(...names: string[]): string {
@@ -172,6 +207,21 @@ function hasReportableVehicleData(row: DailyReportRow): boolean {
   );
 
   return hasDistance || hasFuel || hasIgnition;
+}
+
+function formatReportTime(value: string | null) {
+  return value && value !== "-" ? value : "-";
+}
+
+function formatFuel(value: number | null) {
+  return value === null ? "ไม่พบข้อมูล" : `${formatNumber(value)} ลิตร`;
+}
+
+function formatEfficiency(row: DailyReportRow) {
+  if (!row.distanceKm || row.distanceKm <= 0 || row.fuelUsedLiters === null) {
+    return "-";
+  }
+  return `${formatNumber((row.fuelUsedLiters / row.distanceKm) * 100)} ลิตร/100 กม.`;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
