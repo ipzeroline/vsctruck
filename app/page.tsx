@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import {
   Activity,
   AlertCircle,
@@ -59,6 +60,7 @@ type ReportRow = {
 type ApiResult = {
   ok: boolean;
   message?: string;
+  storageWarning?: string;
   report?: string;
   sent?: boolean;
   vehicleCount?: number;
@@ -339,12 +341,106 @@ type DashboardView =
   | "reportArchive"
   | "staff";
 
-const DAILY_REPORT_VIEWS: DashboardView[] = ["overview", "vehicles", "telegram", "reportDistance", "reportFuel"];
+const DAILY_REPORT_VIEWS: DashboardView[] = ["overview", "vehicles", "telegram", "reports", "reportDistance", "reportFuel"];
 const FLEET_STATUS_VIEWS: DashboardView[] = ["overview", "live", "map", "fuel"];
 const CRON_STATUS_VIEWS: DashboardView[] = ["overview"];
 const REPORT_LIST_VIEWS: DashboardView[] = ["overview", "reports", "reportArchive"];
 const FUEL_TODAY_VIEWS: DashboardView[] = ["overview", "fuel", "reports", "reportRefuel"];
 const DRIVER_AUDIT_VIEWS: DashboardView[] = ["overview", "audit", "reports", "reportOvernightFuel"];
+const PAGE_META: Record<DashboardView, { eyebrow: string; title: string; subtitle: string }> = {
+  overview: {
+    eyebrow: "Fleet operations",
+    title: "ภาพรวม",
+    subtitle: "ดูตำแหน่งรถ ค้นหาทะเบียน ตรวจสอบคนขับ ระยะทาง และน้ำมัน พร้อมบันทึกรายงานไว้ตรวจสอบย้อนหลัง",
+  },
+  live: {
+    eyebrow: "Live API",
+    title: "ข้อมูลสด API",
+    subtitle: "ตรวจสถานะรถล่าสุดจาก Cartrack API พร้อมสรุปรถที่เคลื่อนที่ ดับเครื่อง และมีข้อมูลคนขับ",
+  },
+  map: {
+    eyebrow: "Fleet map",
+    title: "แผนที่",
+    subtitle: "ติดตามตำแหน่งรถบนแผนที่และค้นหาทะเบียนหรือคนขับจากข้อมูลล่าสุด",
+  },
+  vehicles: {
+    eyebrow: "Vehicle report",
+    title: "รายการรถ",
+    subtitle: "ดูรายชื่อรถในรอบรายงาน พร้อมคนขับ เวลาเปิด-ปิดเครื่อง ระยะทาง และสถานะข้อมูลน้ำมัน",
+  },
+  fuel: {
+    eyebrow: "Fuel operations",
+    title: "เติมน้ำมันวันนี้",
+    subtitle: "ตรวจระดับน้ำมันล่าสุด ยอดเติมจริง และความต่างระหว่าง sensor กับข้อมูลที่บันทึก",
+  },
+  audit: {
+    eyebrow: "Driver audit",
+    title: "Driver Audit",
+    subtitle: "ตรวจเคสความเสี่ยงจากพฤติกรรมการใช้งานรถ น้ำมัน และข้อมูล snapshot ล่าสุด",
+  },
+  telegram: {
+    eyebrow: "Telegram delivery",
+    title: "Telegram",
+    subtitle: "พรีวิวและส่งรายงานประจำวันไปยัง Telegram ตามการตั้งค่าที่กำหนด",
+  },
+  reports: {
+    eyebrow: "Reports",
+    title: "สรุปรวม",
+    subtitle: "สรุปข้อมูลรายงาน ระยะทาง น้ำมัน การเติม และเคส audit จากวันที่เลือก",
+  },
+  reportDistance: {
+    eyebrow: "Distance report",
+    title: "ระยะทาง",
+    subtitle: "จัดอันดับระยะทางรายคันและตรวจรถที่วิ่งมากหรือน้อยผิดปกติ",
+  },
+  reportFuel: {
+    eyebrow: "Fuel usage report",
+    title: "ใช้น้ำมัน",
+    subtitle: "เปรียบเทียบการใช้น้ำมันของแต่ละคัน พร้อมระยะทางและอัตราสิ้นเปลืองโดยประมาณ",
+  },
+  reportRefuel: {
+    eyebrow: "Refuel report",
+    title: "เติมน้ำมัน",
+    subtitle: "ตรวจรายการระดับน้ำมันเพิ่มขึ้นจาก snapshot และค้นหาตามทะเบียน คนขับ หรือจำนวนลิตร",
+  },
+  reportOvernightFuel: {
+    eyebrow: "Overnight fuel loss",
+    title: "น้ำมันหายข้ามคืน",
+    subtitle: "ตรวจรถที่น้ำมันลดลงหลังจบรอบหรือหลังดับเครื่องจากข้อมูล snapshot ที่บันทึกไว้",
+  },
+  reportArchive: {
+    eyebrow: "Report archive",
+    title: "ประวัติรายงาน",
+    subtitle: "ดูรายงานย้อนหลังที่บันทึกไว้ในระบบ พร้อมสถานะการส่งและตัวเลขสรุปหลัก",
+  },
+  staff: {
+    eyebrow: "Staff operations",
+    title: "Staff",
+    subtitle: "จัดการบัญชีผู้ใช้งาน สิทธิ์เข้าใช้งาน และสถานะของทีมปฏิบัติการ",
+  },
+};
+
+function getRunErrorDisplay(error?: string) {
+  const message = error ?? "";
+  const looksLikeMongoError =
+    message.includes("MongoDB") ||
+    message.includes("mongodb") ||
+    message.includes("mongo.") ||
+    message.includes("querySrv") ||
+    message.includes("ECONNREFUSED");
+
+  if (looksLikeMongoError) {
+    return {
+      title: "เชื่อมต่อ MongoDB ไม่สำเร็จ",
+      hint: "ตรวจสอบ `MONGODB_URI`, DNS/network และสิทธิ์เชื่อมต่อฐานข้อมูลใน `.env.local`",
+    };
+  }
+
+  return {
+    title: "เชื่อมต่อ Cartrack ไม่สำเร็จ",
+    hint: "ตรวจสอบ API password จาก Fleetweb และ `CARTRACK_BASE_URL` ใน `.env.local`",
+  };
+}
 
 function getTodayInputDate(timezone = "Asia/Bangkok") {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -429,6 +525,8 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   const needsReportList = REPORT_LIST_VIEWS.includes(view);
   const needsFuelToday = FUEL_TODAY_VIEWS.includes(view);
   const needsDriverAudit = DRIVER_AUDIT_VIEWS.includes(view);
+  const pageMeta = PAGE_META[view];
+  const runErrorDisplay = getRunErrorDisplay(state.error);
   const rows = state.data?.rows?.length ? state.data.rows : sampleRows;
   const summary = state.data?.summary;
   const health = useMemo(
@@ -444,6 +542,16 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     moving: mapRows.filter((row) => row.ignition === true && row.idling === false).length,
     withDriver: mapRows.filter((row) => row.driverName !== "-").length,
   };
+  const liveDriverCoverage =
+    liveSummary.visible > 0 ? Math.round((liveSummary.withDriver / liveSummary.visible) * 100) : 0;
+  const liveFuelCoverage =
+    liveSummary.visible > 0
+      ? Math.round((mapRows.filter((row) => typeof row.fuelLevel === "number").length / liveSummary.visible) * 100)
+      : 0;
+  const liveLastUpdated =
+    mapFallback?.snapshotCreatedAt
+      ? formatDateTime(mapFallback.snapshotCreatedAt)
+      : getLatestFleetUpdateLabel(mapRows);
   const overviewStats = useMemo(
     () => buildOverviewStats(rows, reports, liveSummary, fuelToday),
     [rows, reports, liveSummary, fuelToday],
@@ -958,24 +1066,29 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <div className="brand-mark">
             <Truck size={22} aria-hidden="true" />
           </div>
-          <div>
+          <div className="brand-copy">
             <strong>VSCTruck</strong>
             <span>Fleet Operations</span>
           </div>
           <button
             className="mobile-menu-button"
             type="button"
+            aria-label={mobileMenuOpen ? "ปิดเมนูนำทาง" : "เปิดเมนูนำทาง"}
             aria-expanded={mobileMenuOpen}
             aria-controls="dashboard-nav"
             onClick={() => setMobileMenuOpen((open) => !open)}
           >
-            <Menu size={20} aria-hidden="true" />
-            เมนู
+            <span className="mobile-menu-icon" aria-hidden="true">
+              {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+            </span>
+            <span className="mobile-menu-copy">
+              <span>{mobileMenuOpen ? "ปิด" : "เมนู"}</span>
+            </span>
           </button>
         </div>
 
         <nav className="nav-list" id="dashboard-nav" aria-label="Dashboard sections">
-          <span className="nav-group">Operations</span>
+          <span className="nav-group">การใช้งาน</span>
           <NavLink active={view === "overview"} href="/" icon={<Gauge size={18} />} label="ภาพรวม" />
           <NavLink active={view === "live"} href="/live" icon={<Activity size={18} />} label="ข้อมูลสด API" />
           <NavLink active={view === "map"} href="/map" icon={<MapPin size={18} />} label="แผนที่" />
@@ -983,7 +1096,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <NavLink active={view === "fuel"} href="/fuel" icon={<Fuel size={18} />} label="เติมน้ำมันวันนี้" />
           <NavLink active={view === "audit"} href="/audit" icon={<ShieldCheck size={18} />} label="Driver Audit" />
 
-          <span className="nav-group">Reports</span>
+          <span className="nav-group">รายงาน</span>
           <NavLink active={view === "reports"} href="/reports" icon={<History size={18} />} label="สรุปรวม" />
           <NavLink active={view === "reportDistance"} href="/reports/distance" icon={<Gauge size={18} />} label="ระยะทาง" />
           <NavLink active={view === "reportFuel"} href="/reports/fuel" icon={<Fuel size={18} />} label="ใช้น้ำมัน" />
@@ -991,11 +1104,15 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <NavLink active={view === "reportOvernightFuel"} href="/reports/overnight-fuel-loss" icon={<AlertCircle size={18} />} label="น้ำมันหายข้ามคืน" />
           <NavLink active={view === "reportArchive"} href="/reports/archive" icon={<Database size={18} />} label="ประวัติรายงาน" />
 
-          <span className="nav-group">Notifications</span>
+          <span className="nav-group">การแจ้งเตือน</span>
           <NavLink active={view === "telegram"} href="/telegram" icon={<Bot size={18} />} label="Telegram" />
 
-          <span className="nav-group">Admin</span>
+          <span className="nav-group">ผู้ดูแลระบบ</span>
           <NavLink active={view === "staff"} href="/staff" icon={<UsersRound size={18} />} label="Staff" />
+          <button className="nav-item nav-button" type="button" onClick={logout}>
+            <LogOut size={18} aria-hidden="true" />
+            <span>ออกจากระบบ</span>
+          </button>
         </nav>
 
         <div className="sidebar-card">
@@ -1013,11 +1130,9 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       <section className="main-area">
         <header className="dashboard-header" id="overview">
           <div>
-            <p className="eyebrow">Fleet operations</p>
-            <h1>Dashboard</h1>
-            <p className="subtitle">
-              ดูตำแหน่งรถ ค้นหาทะเบียน ตรวจสอบคนขับ ระยะทาง และน้ำมัน พร้อมบันทึกรายงานไว้ตรวจสอบย้อนหลัง
-            </p>
+            <p className="eyebrow">{pageMeta.eyebrow}</p>
+            <h1>{pageMeta.title}</h1>
+            <p className="subtitle">{pageMeta.subtitle}</p>
           </div>
           <div className={`health ${health.kind}`}>
             {health.icon}
@@ -1032,10 +1147,16 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <section className="alert-panel" role="alert">
             <AlertCircle size={20} aria-hidden="true" />
             <div>
-              <strong>เชื่อมต่อ Cartrack ไม่สำเร็จ</strong>
+              <strong>{runErrorDisplay.title}</strong>
               <p>{state.error}</p>
-              <span>ตรวจสอบ API password จาก Fleetweb และ `CARTRACK_BASE_URL` ใน `.env.local`</span>
+              <span>{runErrorDisplay.hint}</span>
             </div>
+          </section>
+        ) : null}
+
+        {needsDailyReportPreview && state.data?.storageWarning ? (
+          <section className="info-panel" role="status">
+            {state.data.storageWarning}
           </section>
         ) : null}
 
@@ -1109,16 +1230,12 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                 รีเฟรชรายงาน
               </button>
             ) : null}
-            {needsDailyReportPreview ? (
+            {view === "telegram" ? (
               <button className="button" disabled={loading !== null} onClick={() => run(true)}>
                 {loading === "send" ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
                 ส่ง Telegram
               </button>
             ) : null}
-            <button className="button ghost" onClick={logout}>
-              <LogOut size={18} />
-              ออกจากระบบ
-            </button>
           </div>
         </section>
 
@@ -1130,25 +1247,36 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                 value={state.data?.vehicleCount ?? overviewStats.reportVehicleCount}
                 suffix="คัน"
                 icon={<Truck size={20} aria-hidden="true" />}
+                tone="fleet"
               />
               <MetricCard
                 label="ระยะทางรวมวันนี้"
                 value={formatNumber(summary?.totalDistanceKm ?? overviewStats.totalDistanceKm)}
                 suffix="กม."
                 icon={<Gauge size={20} aria-hidden="true" />}
+                tone="distance"
               />
               <MetricCard
                 label="ใช้น้ำมันรวม"
                 value={formatNumber(summary?.totalFuelLiters ?? overviewStats.totalFuelLiters)}
                 suffix="ลิตร"
                 icon={<Fuel size={20} aria-hidden="true" />}
+                tone="fuel"
               />
               <MetricCard
                 label="น้ำมันเพิ่มจาก snapshot"
                 value={formatNumber(overviewStats.totalRefilledLiters)}
                 suffix="ลิตร"
                 icon={<Fuel size={20} aria-hidden="true" />}
+                tone="refuel"
               />
+            </section>
+
+            <section className="overview-pulse" aria-label="Operational summary">
+              <OverviewPulseItem label="รถออนไลน์" value={`${liveSummary.visible}/${liveSummary.total}`} />
+              <OverviewPulseItem label="กำลังวิ่ง" value={`${liveSummary.moving} คัน`} />
+              <OverviewPulseItem label="ข้อมูลน้ำมันพร้อมตรวจ" value={`${overviewStats.fuelCoveragePercent}%`} />
+              <OverviewPulseItem label="เคสข้ามคืน" value={`${overnightFuelLoss.count} เคส`} tone={overnightFuelLoss.count > 0 ? "danger" : "ok"} />
             </section>
 
             <section className="overview-grid">
@@ -1238,7 +1366,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                     <p className="eyebrow">Report trend</p>
                     <h2>แนวโน้มรายงานล่าสุด</h2>
                   </div>
-                  <span className="pill">{reports.length} reports</span>
+                  <span className="pill">{overviewStats.reportTrend.length} วันล่าสุด</span>
                 </div>
                 <TrendChart reports={overviewStats.reportTrend} />
               </div>
@@ -1254,10 +1382,10 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                   </button>
                 </div>
                 <div className="report-list compact">
-                  {reports.slice(0, 4).length === 0 ? (
+                  {overviewStats.latestReportsByDate.slice(0, 4).length === 0 ? (
                     <div className="empty-state">ยังไม่มีรายงานย้อนหลัง</div>
                   ) : (
-                    reports.slice(0, 4).map((report) => (
+                    overviewStats.latestReportsByDate.slice(0, 4).map((report) => (
                       <div className="report-item overview-report-item" key={report.id}>
                         <div>
                           <strong>{report.window.labelDate}</strong>
@@ -1423,28 +1551,60 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
               <h2>ข้อมูลสดจากรถและอุปกรณ์</h2>
               <span>สถานะล่าสุดของรถ คนขับ ตำแหน่ง น้ำมัน และเลขไมล์</span>
             </div>
-            <button className="icon-action" onClick={() => loadFleetStatus()} disabled={mapLoading}>
-              {mapLoading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
-            </button>
+            <div className="live-heading-actions">
+              <span className={`live-source-pill ${mapFallback ? "fallback" : "live"}`}>
+                {mapFallback ? "Snapshot" : "Live API"}
+              </span>
+              <button className="icon-action" onClick={() => loadFleetStatus()} disabled={mapLoading}>
+                {mapLoading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+              </button>
+            </div>
           </div>
 
           <div className="live-status-strip">
             <div className="live-status-card moving">
+              <div className="live-status-icon">
+                <Navigation size={20} aria-hidden="true" />
+              </div>
               <span>กำลังวิ่ง</span>
               <strong>{liveSummary.moving}</strong>
             </div>
             <div className="live-status-card idle">
+              <div className="live-status-icon">
+                <Activity size={20} aria-hidden="true" />
+              </div>
               <span>ติดเครื่อง</span>
               <strong>{Math.max(liveSummary.ignitionOn - liveSummary.moving, 0)}</strong>
             </div>
             <div className="live-status-card off">
+              <div className="live-status-icon">
+                <Truck size={20} aria-hidden="true" />
+              </div>
               <span>ดับเครื่อง/ไม่เคลื่อนที่</span>
               <strong>{Math.max(liveSummary.visible - liveSummary.ignitionOn, 0)}</strong>
             </div>
             <div className="live-status-card driver">
+              <div className="live-status-icon">
+                <UserRound size={20} aria-hidden="true" />
+              </div>
               <span>มีข้อมูลคนขับ</span>
               <strong>{liveSummary.withDriver}</strong>
             </div>
+          </div>
+
+          <div className="live-ops-strip">
+            <LiveSignal label="อัปเดตล่าสุด" value={liveLastUpdated} />
+            <LiveSignal
+              label="ข้อมูลคนขับ"
+              value={`${liveDriverCoverage}%`}
+              tone={liveDriverCoverage >= 80 ? "ok" : "warning"}
+            />
+            <LiveSignal
+              label="ข้อมูลน้ำมัน"
+              value={`${liveFuelCoverage}%`}
+              tone={liveFuelCoverage >= 80 ? "ok" : "warning"}
+            />
+            <LiveSignal label="แหล่งข้อมูล" value={mapFallback ? "MongoDB snapshot" : "Cartrack live"} tone={mapFallback ? "warning" : "ok"} />
           </div>
 
           <div className="live-summary-grid">
@@ -2341,19 +2501,55 @@ function MetricCard({
   value,
   suffix,
   icon,
+  tone,
 }: {
   label: string;
   value: string | number;
   suffix: string;
   icon: React.ReactNode;
+  tone?: "fleet" | "distance" | "fuel" | "refuel";
 }) {
   return (
-    <div className="metric-card">
+    <div className={`metric-card ${tone ? `tone-${tone}` : ""}`}>
       <div className="metric-icon">{icon}</div>
       <span>{label}</span>
       <strong>
         {value} <small>{suffix}</small>
       </strong>
+    </div>
+  );
+}
+
+function OverviewPulseItem({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "ok" | "danger";
+}) {
+  return (
+    <div className={`overview-pulse-item ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function LiveSignal({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "ok" | "warning";
+}) {
+  return (
+    <div className={`live-ops-item ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -2370,10 +2566,10 @@ function NavLink({
   label: string;
 }) {
   return (
-    <a className={`nav-item ${active ? "active" : ""}`} href={href}>
+    <Link className={`nav-item ${active ? "active" : ""}`} href={href}>
       {icon}
       <span>{label}</span>
-    </a>
+    </Link>
   );
 }
 
@@ -3057,6 +3253,12 @@ function buildOverviewStats(
   const realRows = rows.filter((row) => row.registration !== "รอข้อมูล");
   const distanceRows = realRows.filter((row) => typeof row.distanceKm === "number");
   const fuelRows = realRows.filter((row) => typeof row.fuelUsedLiters === "number");
+  const latestReportByDate = new Map<string, ReportListItem>();
+  for (const report of reports) {
+    if (!latestReportByDate.has(report.window.labelDate)) {
+      latestReportByDate.set(report.window.labelDate, report);
+    }
+  }
   const maxDistance = Math.max(...distanceRows.map((row) => row.distanceKm ?? 0), 1);
   const maxFuel = Math.max(...fuelRows.map((row) => row.fuelUsedLiters ?? 0), 1);
   const reportVehicleCount = realRows.length || liveSummary.visible || fuelToday?.summary?.vehicleCount || 0;
@@ -3073,6 +3275,7 @@ function buildOverviewStats(
     fuelVehicleCount,
     missingFuelCount,
     fuelCoveragePercent: reportVehicleCount === 0 ? 0 : Math.round((fuelVehicleCount / reportVehicleCount) * 100),
+    latestReportsByDate: Array.from(latestReportByDate.values()),
     distanceBars: [...distanceRows]
       .sort((a, b) => (b.distanceKm ?? 0) - (a.distanceKm ?? 0))
       .slice(0, 6)
@@ -3091,7 +3294,7 @@ function buildOverviewStats(
         value: row.fuelUsedLiters ?? 0,
         percent: ((row.fuelUsedLiters ?? 0) / maxFuel) * 100,
       })),
-    reportTrend: reports
+    reportTrend: Array.from(latestReportByDate.values())
       .slice(0, 6)
       .reverse()
       .map((report) => ({
@@ -3274,6 +3477,28 @@ function formatDateTime(value: string) {
     timeStyle: "short",
     timeZone: "Asia/Bangkok",
   }).format(new Date(value));
+}
+
+function getLatestFleetUpdateLabel(rows: FleetStatusRow[]) {
+  let latestTime = 0;
+  let fallback: string | null = null;
+
+  rows.forEach((row) => {
+    const value = row.locationUpdated ?? row.eventTs ?? row.fuelUpdated;
+    if (!value) {
+      return;
+    }
+    fallback ??= value;
+    const time = new Date(value).getTime();
+    if (Number.isFinite(time) && time > latestTime) {
+      latestTime = time;
+    }
+  });
+
+  if (latestTime > 0) {
+    return formatDateTime(new Date(latestTime).toISOString());
+  }
+  return fallback ?? "-";
 }
 
 function formatRelativeMinutes(value: number | null | undefined) {

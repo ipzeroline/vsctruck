@@ -22,11 +22,20 @@ export async function POST(request: NextRequest) {
       await sendTelegramMessage(report.text, config);
     }
 
-    const reportId = await saveReport(report, send);
+    let reportId: string | undefined;
+    let storageWarning: string | undefined;
+    try {
+      reportId = await saveReport(report, send);
+    } catch (error) {
+      storageWarning = `สร้างรายงานสำเร็จ แต่บันทึกลง MongoDB ไม่สำเร็จ: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`;
+    }
 
     return NextResponse.json({
       ok: true,
       reportId,
+      storageWarning,
       sent: send,
       report: report.text,
       vehicleCount: report.vehicleCount,
