@@ -27,8 +27,14 @@ cat >> "$TMP_FILE" <<CRON
 SHELL=/bin/sh
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
-# Snapshot sync: เก็บ fuel/status ทุก 1 นาที ตั้งแต่ 05:00-20:59 Asia/Bangkok/server time
-* 5-20 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n[%s] snapshot sync\n" "$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+# Snapshot sync: ก่อนเริ่มงานทุก 5 นาที เพื่อเก็บน้ำมันตั้งต้น
+*/5 5-6 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n[%s] snapshot sync\n" "$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+
+# Snapshot sync: ช่วงทำงานหลักทุก 2 นาที สำหรับจับเติมน้ำมันและสถานะรถ
+*/2 7-17 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n[%s] snapshot sync\n" "$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+
+# Snapshot sync: หลังเลิกงานทุก 5 นาที เพื่อปิดรอบและตรวจข้อมูลค้าง
+*/5 18-20 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n[%s] snapshot sync\n" "$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
 
 # Daily Telegram report: ส่งรายงาน 18:00
 0 18 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n[%s] daily report\n" "$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")" >> logs/server-daily-report.log && curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST "https://$DOMAIN/api/report/run?send=1&secret=\${REPORT_CRON_SECRET}" >> logs/server-daily-report.log 2>&1'

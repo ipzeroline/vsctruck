@@ -11,20 +11,26 @@
 ## Recommended Schedule
 
 สำหรับงานรถที่เริ่มประมาณ 07:00 ให้เก็บ snapshot ตั้งแต่ 05:00 เพื่อให้มีข้อมูลก่อน `firstIgnitionOn`
-ถ้าต้องจับการเติมน้ำมันให้แม่น ควรใช้ทุก 1 นาทีในช่วงทำงาน เพราะเหตุการณ์เติมอาจเกิดและจบภายในไม่กี่นาที
+สำหรับ production แนะนำให้ละเอียดเฉพาะช่วงทำงานหลัก โดยใช้ทุก 2 นาทีเพื่อจับเติมน้ำมันได้ทันและไม่กด Cartrack API ถี่เกินไป
 
 ```cron
 SHELL=/bin/sh
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
-# เก็บ snapshot ทุก 1 นาที ช่วง 05:00-20:59
-* 5-20 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
+# ก่อนเริ่มงาน: เก็บน้ำมันตั้งต้นทุก 5 นาที
+*/5 5-6 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
+
+# ช่วงทำงานหลัก: เก็บทุก 2 นาที
+*/2 7-17 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
+
+# หลังเลิกงาน: ปิดรอบทุก 5 นาที
+*/5 18-20 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
 
 # ส่งรายงาน Telegram ทุกวัน 18:00
 0 18 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-daily-report.sh
 ```
 
-ถ้ารถเริ่มออกก่อน 06:00 ให้ขยายเป็น `* 4-20 * * *`
+ถ้ารถเริ่มออกก่อน 06:00 ให้เพิ่มช่วงก่อนเริ่มงานเป็น `*/5 4-6 * * *`
 
 ## Install On macOS
 
@@ -74,7 +80,9 @@ npm run cron:install:production
 คำสั่งนี้จะติดตั้ง block นี้ใน `crontab` โดยอัตโนมัติ:
 
 ```cron
-* 5-20 * * * curl -fsS -X POST "https://vsctruck.com/api/audit?secret=..."
+*/5 5-6 * * * curl -sS -X POST "https://vsctruck.com/api/audit?secret=..."
+*/2 7-17 * * * curl -sS -X POST "https://vsctruck.com/api/audit?secret=..."
+*/5 18-20 * * * curl -sS -X POST "https://vsctruck.com/api/audit?secret=..."
 0 18 * * * curl -fsS -X POST "https://vsctruck.com/api/report/run?send=1&secret=..."
 ```
 
@@ -117,7 +125,7 @@ curl -i -sS -X POST "https://vsctruck.com/api/audit?secret=${REPORT_CRON_SECRET}
 - Low confidence: มี snapshot หลังสตาร์ทเท่านั้น
 - No data: ไม่มี snapshot ของทะเบียนนั้นในวันนั้น
 
-สำหรับรถ `0704777` ที่เติมจริงเกือบ 100 ลิตร แต่ sensor เห็นเพิ่ม 6 ลิตร สาเหตุคือ snapshot เริ่มหลังเหตุการณ์สำคัญไปแล้ว cron ทุก 1 นาทีตั้งแต่ก่อนเริ่มงานจะทำให้ระบบจับช่วงก่อนเติม/ก่อนสตาร์ทได้แม่นขึ้น
+สำหรับรถ `0704777` ที่เติมจริงเกือบ 100 ลิตร แต่ sensor เห็นเพิ่ม 6 ลิตร สาเหตุคือ snapshot เริ่มหลังเหตุการณ์สำคัญไปแล้ว cron ทุก 2 นาทีในช่วงทำงานหลักตั้งแต่ก่อนเติมจะทำให้ระบบจับช่วงก่อนเติม/หลังเติมได้แม่นขึ้น
 
 ## Fuel Storage Model
 

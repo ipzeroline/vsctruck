@@ -273,6 +273,33 @@ type DriverAuditResult = {
   };
 };
 
+type CronStatusResult = {
+  ok: boolean;
+  message?: string;
+  status?: {
+    latestAt: string | null;
+    latestLabelDate: string | null;
+    ageMinutes: number | null;
+    status: "healthy" | "warning" | "stale" | "empty";
+    fuelSnapshot: {
+      createdAt: string;
+      labelDate: string;
+      rowCount: number;
+    } | null;
+    vehicleStatusSnapshot: {
+      createdAt: string;
+      labelDate: string;
+      rowCount: number;
+    } | null;
+    latestDetectedRefill: {
+      detectedAt: string;
+      labelDate: string;
+      registration: string;
+      refilledLiters: number;
+    } | null;
+  };
+};
+
 type StaffForm = {
   name: string;
   email: string;
@@ -334,6 +361,9 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   const [auditError, setAuditError] = useState<string | undefined>();
   const [fuelToday, setFuelToday] = useState<FuelTodayResult>();
   const [driverAudit, setDriverAudit] = useState<DriverAuditResult["audit"]>();
+  const [cronStatus, setCronStatus] = useState<CronStatusResult["status"]>();
+  const [cronStatusLoading, setCronStatusLoading] = useState(false);
+  const [cronStatusError, setCronStatusError] = useState<string | undefined>();
   const [reports, setReports] = useState<ReportListItem[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [staffForm, setStaffForm] = useState<StaffForm>({
@@ -388,6 +418,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     didAutoLoad.current = true;
     void run(false);
     void loadFleetStatus();
+    void loadCronStatus();
     void loadReports();
     if (["overview", "fuel", "reports", "reportRefuel"].includes(view)) {
       void loadFuelToday(false);
@@ -406,6 +437,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     }
     const interval = window.setInterval(() => {
       void loadFleetStatus();
+      void loadCronStatus();
     }, 60000);
     return () => window.clearInterval(interval);
   }, [view]);
@@ -429,6 +461,25 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       setMapError(error instanceof Error ? error.message : "โหลดตำแหน่งรถไม่สำเร็จ");
     } finally {
       setMapLoading(false);
+    }
+  }
+
+  async function loadCronStatus() {
+    setCronStatusLoading(true);
+    setCronStatusError(undefined);
+
+    try {
+      const response = await fetch("/api/cron/status", { method: "GET" });
+      const data = (await response.json()) as CronStatusResult;
+      if (!response.ok || !data.ok) {
+        setCronStatusError(data.message ?? "โหลดสถานะ cronjob ไม่สำเร็จ");
+        return;
+      }
+      setCronStatus(data.status);
+    } catch (error) {
+      setCronStatusError(error instanceof Error ? error.message : "โหลดสถานะ cronjob ไม่สำเร็จ");
+    } finally {
+      setCronStatusLoading(false);
     }
   }
 
@@ -947,6 +998,13 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                   />
                 </div>
               </div>
+
+              <CronStatusPanel
+                status={cronStatus}
+                loading={cronStatusLoading}
+                error={cronStatusError}
+                onRefresh={loadCronStatus}
+              />
 
               <RealtimeFuelPanel data={realtimeFuel} loading={mapLoading} onRefresh={loadFleetStatus} />
 
@@ -2045,6 +2103,72 @@ function OverviewStatusItem({
   );
 }
 
+function CronStatusPanel({
+  status,
+  loading,
+  error,
+  onRefresh,
+}: {
+  status?: CronStatusResult["status"];
+  loading: boolean;
+  error?: string;
+  onRefresh: () => void;
+}) {
+  const health = getCronHealth(status?.status);
+
+  return (
+    <div className={`panel cron-status-panel ${health.tone}`}>
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Cronjob status</p>
+          <h2>การอัพเดทล่าสุด</h2>
+        </div>
+        <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label="รีเฟรชสถานะ cronjob">
+          {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+        </button>
+      </div>
+
+      <div className="cron-status-main">
+        <div className="cron-status-icon">{health.icon}</div>
+        <div>
+          <strong>{health.title}</strong>
+          <span>{error ?? health.detail}</span>
+        </div>
+      </div>
+
+      <div className="cron-status-grid">
+        <MiniStat
+          label="บันทึกล่าสุด"
+          value={status?.latestAt ? formatRelativeMinutes(status.ageMinutes) : "-"}
+          icon={<Clock3 size={18} />}
+        />
+        <MiniStat
+          label="Fuel snapshot"
+          value={status?.fuelSnapshot ? `${status.fuelSnapshot.rowCount} คัน` : "-"}
+          icon={<Fuel size={18} />}
+        />
+        <MiniStat
+          label="Vehicle snapshot"
+          value={status?.vehicleStatusSnapshot ? `${status.vehicleStatusSnapshot.rowCount} คัน` : "-"}
+          icon={<Truck size={18} />}
+        />
+      </div>
+
+      <div className="cron-status-detail">
+        <span>
+          ล่าสุด: {status?.latestAt ? formatDateTime(status.latestAt) : "ยังไม่มีข้อมูล"}
+        </span>
+        <span>
+          เติมน้ำมันล่าสุด:{" "}
+          {status?.latestDetectedRefill
+            ? `${status.latestDetectedRefill.registration} +${formatNumber(status.latestDetectedRefill.refilledLiters)} ลิตร`
+            : "ยังไม่พบ event เติมจาก sensor"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function InsightItem({
   icon,
   title,
@@ -2524,6 +2648,21 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatRelativeMinutes(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (value <= 0) {
+    return "เมื่อสักครู่";
+  }
+  if (value < 60) {
+    return `${value} นาทีที่แล้ว`;
+  }
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return minutes === 0 ? `${hours} ชม.ที่แล้ว` : `${hours} ชม. ${minutes} นาที`;
+}
+
 function formatNullable(value: number | null, suffix: string) {
   return value === null ? "-" : `${formatNumber(value)} ${suffix}`;
 }
@@ -2601,5 +2740,38 @@ function getHealth(status: RunState["status"]) {
     title: "Ready to run",
     detail: "กดพรีวิวเพื่อดึงข้อมูลสด",
     icon: <ShieldCheck size={20} aria-hidden="true" />,
+  };
+}
+
+function getCronHealth(status: NonNullable<CronStatusResult["status"]>["status"] | undefined) {
+  if (status === "healthy") {
+    return {
+      tone: "healthy",
+      title: "Cronjob ทำงานปกติ",
+      detail: "มี snapshot ใหม่ในช่วงไม่กี่นาทีล่าสุด",
+      icon: <CheckCircle2 size={22} aria-hidden="true" />,
+    };
+  }
+  if (status === "warning") {
+    return {
+      tone: "warning",
+      title: "Cronjob เริ่มช้า",
+      detail: "snapshot ล่าสุดเกิน 3 นาที ควรติดตาม",
+      icon: <Clock3 size={22} aria-hidden="true" />,
+    };
+  }
+  if (status === "stale") {
+    return {
+      tone: "stale",
+      title: "Cronjob ค้าง",
+      detail: "snapshot ล่าสุดเกิน 10 นาที ควรตรวจ server log",
+      icon: <AlertCircle size={22} aria-hidden="true" />,
+    };
+  }
+  return {
+    tone: "empty",
+    title: "ยังไม่มี snapshot",
+    detail: "ยังไม่พบข้อมูลจาก cronjob",
+    icon: <Database size={22} aria-hidden="true" />,
   };
 }

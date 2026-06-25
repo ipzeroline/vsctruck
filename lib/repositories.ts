@@ -240,6 +240,54 @@ export type DriverAuditRow = {
   topIssue: string;
 };
 
+export async function getCronStatus() {
+  await ensureMongoIndexes();
+  const db = await getDb();
+  const [latestFuelSnapshot, latestVehicleStatusSnapshot, latestDetectedRefill] = await Promise.all([
+    db
+      .collection<FuelSnapshotDocument>("fuel_snapshots")
+      .findOne({}, { sort: { createdAt: -1 }, projection: { createdAt: 1, labelDate: 1, rows: 1 } }),
+    db
+      .collection<VehicleStatusSnapshotDocument>("vehicle_status_snapshots")
+      .findOne({}, { sort: { createdAt: -1 }, projection: { createdAt: 1, labelDate: 1, rows: 1 } }),
+    db
+      .collection<FuelDetectedRefillDocument>("fuel_detected_refills")
+      .findOne({}, { sort: { detectedAt: -1 }, projection: { detectedAt: 1, labelDate: 1, registration: 1, refilledLiters: 1 } }),
+  ]);
+
+  const latestAt = latestFuelSnapshot?.createdAt ?? latestVehicleStatusSnapshot?.createdAt ?? null;
+  const ageMinutes = latestAt ? Math.max(0, Math.round((Date.now() - latestAt.getTime()) / 60000)) : null;
+
+  return {
+    latestAt: latestAt?.toISOString() ?? null,
+    latestLabelDate: latestFuelSnapshot?.labelDate ?? latestVehicleStatusSnapshot?.labelDate ?? null,
+    ageMinutes,
+    status: getCronHealthStatus(ageMinutes),
+    fuelSnapshot: latestFuelSnapshot
+      ? {
+          createdAt: latestFuelSnapshot.createdAt.toISOString(),
+          labelDate: latestFuelSnapshot.labelDate,
+          rowCount: latestFuelSnapshot.rows.length,
+        }
+      : null,
+    vehicleStatusSnapshot: latestVehicleStatusSnapshot
+      ? {
+          createdAt: latestVehicleStatusSnapshot.createdAt.toISOString(),
+          labelDate: latestVehicleStatusSnapshot.labelDate,
+          rowCount: latestVehicleStatusSnapshot.rows.length,
+        }
+      : null,
+    latestDetectedRefill: latestDetectedRefill
+      ? {
+          detectedAt: latestDetectedRefill.detectedAt.toISOString(),
+          labelDate: latestDetectedRefill.labelDate,
+          registration: latestDetectedRefill.registration,
+          refilledLiters: latestDetectedRefill.refilledLiters,
+        }
+      : null,
+  };
+}
+
 export async function saveReport(report: DailyReport, sent: boolean): Promise<string> {
   await ensureMongoIndexes();
   const db = await getDb();
@@ -765,6 +813,19 @@ function getDetectedFuelConfidence(refilledLiters: number, sampleCount: number):
     return "medium";
   }
   return "low";
+}
+
+function getCronHealthStatus(ageMinutes: number | null): "healthy" | "warning" | "stale" | "empty" {
+  if (ageMinutes === null) {
+    return "empty";
+  }
+  if (ageMinutes <= 3) {
+    return "healthy";
+  }
+  if (ageMinutes <= 10) {
+    return "warning";
+  }
+  return "stale";
 }
 
 function buildFuelReconciliation(
