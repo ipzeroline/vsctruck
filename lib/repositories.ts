@@ -383,11 +383,14 @@ export async function buildDriverDailyAudit(labelDate: string) {
       { caseKey: item.caseKey },
       {
         $setOnInsert: {
-          ...item,
           status: "open",
           createdAt: now,
         },
         $set: {
+          labelDate: item.labelDate,
+          type: item.type,
+          driverName: item.driverName,
+          registration: item.registration,
           severity: item.severity,
           title: item.title,
           detail: item.detail,
