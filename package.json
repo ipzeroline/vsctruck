@@ -9,6 +9,8 @@
     "lint": "next lint",
     "report:send": "tsx scripts/send-daily-report.ts",
     "report:cron": "tsx scripts/cron.ts",
+    "auth:check": "tsx scripts/check-login.ts",
+    "staff:admin": "tsx scripts/upsert-admin-staff.ts",
     "audit:sync": "tsx scripts/sync-driver-audit.ts",
     "audit:sync:report": "tsx scripts/sync-driver-audit.ts --report",
     "cron:snapshot": "sh scripts/run-snapshot-sync.sh",

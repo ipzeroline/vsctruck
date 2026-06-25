@@ -10,7 +10,7 @@ type SessionPayload = {
 };
 
 export function getAuthCredentials() {
-  const username = process.env.VSC_AUTH_USERNAME ?? (process.env.NODE_ENV === "production" ? "" : "admin");
+  const username = (process.env.VSC_AUTH_USERNAME ?? (process.env.NODE_ENV === "production" ? "" : "admin")).trim();
   const password =
     process.env.VSC_AUTH_PASSWORD ?? (process.env.NODE_ENV === "production" ? "" : "VscTruck@2026");
 
