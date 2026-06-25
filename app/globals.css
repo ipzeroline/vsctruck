@@ -806,6 +806,86 @@ h2 {
   font-size: 13px;
 }
 
+.overnight-fuel-panel {
+  border-left: 4px solid #bbf7d0;
+}
+
+.overnight-fuel-panel.danger {
+  border-left-color: var(--danger);
+  background:
+    linear-gradient(135deg, rgba(254, 242, 242, 0.9), rgba(255, 255, 255, 0.98)),
+    #ffffff;
+}
+
+.overnight-fuel-panel.clear {
+  border-left-color: var(--success);
+}
+
+.overnight-fuel-hero {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.overnight-fuel-hero > div {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.overnight-fuel-hero span,
+.overnight-fuel-hero strong,
+.overnight-fuel-hero small {
+  display: block;
+}
+
+.overnight-fuel-hero span,
+.overnight-fuel-hero small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overnight-fuel-hero strong {
+  margin: 6px 0 3px;
+  color: var(--ink);
+  font-size: 32px;
+  line-height: 1;
+}
+
+.overnight-fuel-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.overnight-fuel-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) repeat(3, minmax(88px, 0.8fr)) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.overnight-fuel-item span,
+.overnight-fuel-item strong {
+  display: block;
+}
+
+.overnight-fuel-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overnight-loss-value strong {
+  color: var(--danger);
+}
+
 .overview-insight-panel {
   display: grid;
   align-content: start;
@@ -2283,6 +2363,16 @@ tbody tr:hover td {
   background: #fff7ed;
 }
 
+.audit-card.red {
+  border-color: #fecaca;
+  background: var(--danger-bg);
+}
+
+.audit-card.green {
+  border-color: #bbf7d0;
+  background: var(--success-bg);
+}
+
 .audit-card-icon {
   display: grid;
   place-items: center;
@@ -2291,6 +2381,16 @@ tbody tr:hover td {
   border-radius: 8px;
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.audit-card.red .audit-card-icon {
+  background: #ffffff;
+  color: var(--danger);
+}
+
+.audit-card.green .audit-card-icon {
+  background: #ffffff;
+  color: var(--success);
 }
 
 .audit-card span,
@@ -3733,6 +3833,8 @@ tbody tr:hover td {
   .fuel-vehicle-card,
   .fuel-vehicle-list,
   .cron-status-grid,
+  .overnight-fuel-hero,
+  .overnight-fuel-item,
   .audit-command-strip,
   .audit-quality-grid,
   .audit-kpi-grid,

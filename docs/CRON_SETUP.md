@@ -92,6 +92,7 @@ npm run cron:install:production
 
 ```bash
 crontab -l
+systemctl status cron --no-pager
 ```
 
 ดู log production:
@@ -115,6 +116,9 @@ curl -i -sS -X POST "https://vsctruck.com/api/audit?secret=${REPORT_CRON_SECRET}
 ```
 
 อย่าใช้ `curl -f` ตอน debug เพราะมันจะซ่อน JSON error body ของ API และเห็นแค่ `curl: (22) ... 500`
+
+บน Ubuntu ห้ามใช้ `/bin/sh -lc` ใน crontab เพราะ `/bin/sh` มักเป็น `dash` และไม่รองรับ `-l`
+ตัว installer ใช้ `/bin/sh -c` พร้อม `flock` เพื่อกัน job ซ้อน ถ้า API รอบก่อนหน้ายังไม่จบ
 
 ## Accuracy Rules
 

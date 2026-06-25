@@ -329,6 +329,7 @@ type DashboardView =
   | "reportDistance"
   | "reportFuel"
   | "reportRefuel"
+  | "reportOvernightFuel"
   | "reportArchive"
   | "staff";
 
@@ -408,6 +409,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     () => buildOverviewStats(rows, reports, liveSummary, fuelToday),
     [rows, reports, liveSummary, fuelToday],
   );
+  const overnightFuelLoss = useMemo(() => buildOvernightFuelLossSummary(driverAudit?.cases ?? []), [driverAudit]);
   const fuelDashboard = useMemo(() => buildFuelDashboard(fuelToday), [fuelToday]);
   const realtimeFuel = useMemo(() => buildRealtimeFuel(mapRows), [mapRows]);
 
@@ -423,7 +425,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     if (["overview", "fuel", "reports", "reportRefuel"].includes(view)) {
       void loadFuelToday(false);
     }
-    if (view === "audit") {
+    if (["overview", "audit", "reports", "reportOvernightFuel"].includes(view)) {
       void loadDriverAudit();
     }
     if (view === "staff") {
@@ -838,6 +840,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           <NavLink active={view === "reportDistance"} href="/reports/distance" icon={<Gauge size={18} />} label="ระยะทาง" />
           <NavLink active={view === "reportFuel"} href="/reports/fuel" icon={<Fuel size={18} />} label="ใช้น้ำมัน" />
           <NavLink active={view === "reportRefuel"} href="/reports/refuel" icon={<Fuel size={18} />} label="เติมน้ำมัน" />
+          <NavLink active={view === "reportOvernightFuel"} href="/reports/overnight-fuel-loss" icon={<AlertCircle size={18} />} label="น้ำมันหายข้ามคืน" />
           <NavLink active={view === "reportArchive"} href="/reports/archive" icon={<Database size={18} />} label="ประวัติรายงาน" />
 
           <span className="nav-group">Notifications</span>
@@ -998,6 +1001,13 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
                   />
                 </div>
               </div>
+
+              <OvernightFuelLossPanel
+                data={overnightFuelLoss}
+                loading={auditLoading}
+                onRefresh={loadDriverAudit}
+                compact
+              />
 
               <CronStatusPanel
                 status={cronStatus}
@@ -1839,6 +1849,36 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
           </section>
         ) : null}
 
+        {view === "reportOvernightFuel" ? (
+          <section className="panel report-detail-panel">
+            <ReportDetailHeading
+              eyebrow="Overnight fuel loss"
+              title="รายงานน้ำมันหายข้ามคืน"
+              description="ตรวจรถที่น้ำมันลดลงหลังดับเครื่องหรือหลังจบรอบ โดยเทียบ snapshot ล่าสุดของวันก่อนหน้ากับ snapshot แรกของวันนี้"
+            />
+            {auditError ? <div className="map-error">{auditError}</div> : null}
+            <div className="actions report-actions">
+              <button className="button secondary" onClick={() => loadDriverAudit()} disabled={auditLoading}>
+                {auditLoading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+                โหลด Audit ล่าสุด
+              </button>
+              <button className="button" onClick={() => syncDriverAudit(false)} disabled={auditLoading}>
+                {auditLoading ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
+                เก็บ Snapshot / ตรวจซ้ำ
+              </button>
+            </div>
+
+            <div className="audit-kpi-grid compact">
+              <AuditCard title="รถที่พบเคส" value={`${overnightFuelLoss.count} คัน`} detail="น้ำมันลดข้ามคืนผิดปกติ" icon={<AlertCircle size={18} />} tone={overnightFuelLoss.count > 0 ? "red" : "green"} />
+              <AuditCard title="น้ำมันหายรวม" value={`${formatNumber(overnightFuelLoss.totalLiters)} ลิตร`} detail="รวมเฉพาะเคสเปิดใน Audit ล่าสุด" icon={<Fuel size={18} />} tone="orange" />
+              <AuditCard title="Critical" value={`${overnightFuelLoss.criticalCount} เคส`} detail="หาย 30 ลิตรขึ้นไป" icon={<ShieldCheck size={18} />} tone={overnightFuelLoss.criticalCount > 0 ? "red" : undefined} />
+              <AuditCard title="อัพเดท Audit" value={driverAudit ? formatDateTime(driverAudit.generatedAt) : "-"} detail={driverAudit?.labelDate ?? "ยังไม่มีข้อมูล"} icon={<Clock3 size={18} />} />
+            </div>
+
+            <OvernightFuelLossTable cases={overnightFuelLoss.cases} />
+          </section>
+        ) : null}
+
         {view === "reportArchive" ? (
         <section className="ops-grid">
           <div className="panel" id="reports">
@@ -2336,10 +2376,10 @@ function AuditCard({
   value: string;
   detail: string;
   icon: React.ReactNode;
-  tone?: "orange";
+  tone?: "orange" | "red" | "green";
 }) {
   return (
-    <div className={`audit-card ${tone === "orange" ? "orange" : ""}`}>
+    <div className={`audit-card ${tone ?? ""}`}>
       <div className="audit-card-icon">{icon}</div>
       <span>{title}</span>
       <strong>{value}</strong>
@@ -2381,6 +2421,117 @@ function AuditList({
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function OvernightFuelLossPanel({
+  data,
+  loading,
+  onRefresh,
+  compact = false,
+}: {
+  data: ReturnType<typeof buildOvernightFuelLossSummary>;
+  loading: boolean;
+  onRefresh: () => void;
+  compact?: boolean;
+}) {
+  const topCases = data.cases.slice(0, compact ? 3 : 6);
+
+  return (
+    <div className={`panel overnight-fuel-panel ${data.count > 0 ? "danger" : "clear"}`}>
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Overnight fuel loss</p>
+          <h2>น้ำมันหายข้ามคืน</h2>
+          <span className="panel-subtitle">เทียบน้ำมันหลังจบรอบกับ snapshot แรกของเช้าวันถัดไป</span>
+        </div>
+        <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label="รีเฟรชเคสน้ำมันหายข้ามคืน">
+          {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+        </button>
+      </div>
+
+      <div className="overnight-fuel-hero">
+        <div>
+          <span>รถที่ต้องตรวจ</span>
+          <strong>{data.count}</strong>
+          <small>{data.count > 0 ? `หายรวม ${formatNumber(data.totalLiters)} ลิตร` : "ยังไม่พบเคสผิดปกติ"}</small>
+        </div>
+        <div>
+          <span>Critical</span>
+          <strong>{data.criticalCount}</strong>
+          <small>หาย 30 ลิตรขึ้นไป</small>
+        </div>
+      </div>
+
+      <div className="overnight-fuel-list">
+        {topCases.length === 0 ? (
+          <div className="empty-state">ยังไม่พบเคสน้ำมันหายข้ามคืนใน Audit ล่าสุด</div>
+        ) : (
+          topCases.map((item) => (
+            <div className="overnight-fuel-item" key={item.id}>
+              <div>
+                <strong>{item.registration}</strong>
+                <span>{item.driverName}</span>
+              </div>
+              <div>
+                <span>ก่อน</span>
+                <strong>{formatNullable(item.evidence.fuelBefore ?? null, "ลิตร")}</strong>
+              </div>
+              <div>
+                <span>เช้า</span>
+                <strong>{formatNullable(item.evidence.fuelAfter ?? null, "ลิตร")}</strong>
+              </div>
+              <div className="overnight-loss-value">
+                <span>หาย</span>
+                <strong>{formatNumber(item.lossLiters)} ลิตร</strong>
+              </div>
+              <span className={`badge ${item.severity === "critical" ? "danger" : "warning"}`}>{item.severity}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OvernightFuelLossTable({ cases }: { cases: ReturnType<typeof buildOvernightFuelLossSummary>["cases"] }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ทะเบียน</th>
+            <th>คนขับ</th>
+            <th>หลังจบรอบ</th>
+            <th>เช้าวันถัดไป</th>
+            <th>หายไป</th>
+            <th>Odometer เพิ่ม</th>
+            <th>ระดับ</th>
+            <th>เวลาที่พบ</th>
+            <th>สถานที่</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cases.length === 0 ? (
+            <tr><td colSpan={9}>ยังไม่พบเคสน้ำมันหายข้ามคืนใน Audit ล่าสุด</td></tr>
+          ) : (
+            cases.map((item) => (
+              <tr key={item.id}>
+                <td><strong>{item.registration}</strong></td>
+                <td>{item.driverName}</td>
+                <td>{formatNullable(item.evidence.fuelBefore ?? null, "ลิตร")}</td>
+                <td>{formatNullable(item.evidence.fuelAfter ?? null, "ลิตร")}</td>
+                <td><strong>{formatNumber(item.lossLiters)} ลิตร</strong></td>
+                <td>{formatNullable(item.evidence.distanceKm ?? null, "กม.")}</td>
+                <td><span className={`badge ${item.severity === "critical" ? "danger" : "warning"}`}>{item.severity}</span></td>
+                <td>{item.evidence.time ? formatDateTime(item.evidence.time) : "-"}</td>
+                <td>{item.evidence.positionDescription ?? "-"}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -2541,6 +2692,28 @@ function buildFuelDashboard(fuelToday?: FuelTodayResult) {
         ...vehicle,
         percent: ((vehicle.latestFuelLiters ?? 0) / maxFuel) * 100,
       })),
+  };
+}
+
+function buildOvernightFuelLossSummary(cases: DriverAuditCase[]) {
+  const overnightCases = cases
+    .filter((item) => item.type === "overnight_fuel_loss")
+    .map((item) => ({
+      ...item,
+      lossLiters: Math.max(
+        item.evidence.fuelLiters ?? 0,
+        typeof item.evidence.fuelBefore === "number" && typeof item.evidence.fuelAfter === "number"
+          ? item.evidence.fuelBefore - item.evidence.fuelAfter
+          : 0,
+      ),
+    }))
+    .sort((a, b) => b.lossLiters - a.lossLiters);
+
+  return {
+    cases: overnightCases,
+    count: overnightCases.length,
+    criticalCount: overnightCases.filter((item) => item.severity === "critical").length,
+    totalLiters: overnightCases.reduce((total, item) => total + item.lossLiters, 0),
   };
 }
 

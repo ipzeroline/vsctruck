@@ -169,6 +169,7 @@ export type DriverAuditCaseType =
   | "stale_gps"
   | "gps_quality_bad"
   | "fuel_drop_anomaly"
+  | "overnight_fuel_loss"
   | "fuel_refill_detected"
   | "fuel_actual_mismatch"
   | "low_distance_high_fuel"
@@ -413,18 +414,33 @@ export async function saveVehicleStatusSnapshot(labelDate: string, rows: FleetSt
 export async function buildDriverDailyAudit(labelDate: string) {
   await ensureMongoIndexes();
   const db = await getDb();
-  const [latestReport, snapshots, fuelSummary] = await Promise.all([
+  const previousLabelDate = getPreviousLabelDate(labelDate);
+  const [latestReport, snapshots, previousSnapshots, fuelSummary] = await Promise.all([
     db.collection<ReportDocument>("reports").findOne({ "window.labelDate": labelDate }, { sort: { createdAt: -1 } }),
     db
       .collection<VehicleStatusSnapshotDocument>("vehicle_status_snapshots")
       .find({ labelDate })
       .sort({ createdAt: 1 })
       .toArray(),
+    previousLabelDate
+      ? db
+          .collection<VehicleStatusSnapshotDocument>("vehicle_status_snapshots")
+          .find({ labelDate: previousLabelDate })
+          .sort({ createdAt: 1 })
+          .toArray()
+      : Promise.resolve([]),
     buildFuelSummary(labelDate),
   ]);
 
   const reportRows = latestReport?.rows ?? [];
-  const cases = detectDriverAuditCases(labelDate, snapshots, reportRows, fuelSummary.events, fuelSummary.reconciliation);
+  const cases = detectDriverAuditCases(
+    labelDate,
+    snapshots,
+    reportRows,
+    fuelSummary.events,
+    fuelSummary.reconciliation,
+    previousSnapshots,
+  );
   const now = new Date();
   for (const item of cases) {
     await db.collection<DriverAuditCaseDocument>("driver_audit_cases").updateOne(
@@ -1093,6 +1109,7 @@ function detectDriverAuditCases(
   reportRows: DailyReport["rows"],
   refillEvents: FuelRefillEvent[],
   reconciliation: FuelReconciliation[] = [],
+  previousSnapshots: WithId<VehicleStatusSnapshotDocument>[] = [],
 ) {
   const cases = new Map<string, Omit<DriverAuditCaseDocument, "_id" | "status" | "createdAt" | "updatedAt">>();
   const rowsByRegistration = new Map(reportRows.map((row) => [row.registration, row]));
@@ -1219,6 +1236,10 @@ function detectDriverAuditCases(
     }
   }
 
+  for (const item of detectOvernightFuelLoss(labelDate, previousSnapshots, snapshots)) {
+    addCase(cases, item);
+  }
+
   for (const row of reportRows) {
     if ((row.distanceKm ?? 0) < 20 && (row.fuelUsedLiters ?? 0) > 20) {
       addCase(cases, {
@@ -1280,6 +1301,58 @@ function detectDriverAuditCases(
   }
 
   return Array.from(cases.values());
+}
+
+function detectOvernightFuelLoss(
+  labelDate: string,
+  previousSnapshots: WithId<VehicleStatusSnapshotDocument>[],
+  currentSnapshots: WithId<VehicleStatusSnapshotDocument>[],
+): Array<Omit<DriverAuditCaseDocument, "_id" | "caseKey" | "status" | "createdAt" | "updatedAt">> {
+  const cases: Array<Omit<DriverAuditCaseDocument, "_id" | "caseKey" | "status" | "createdAt" | "updatedAt">> = [];
+  if (previousSnapshots.length === 0 || currentSnapshots.length === 0) {
+    return cases;
+  }
+
+  const previousLastRows = latestRowsByRegistration(previousSnapshots);
+  const currentFirstRows = firstRowsByRegistration(currentSnapshots);
+
+  for (const [registration, previous] of previousLastRows.entries()) {
+    const current = currentFirstRows.get(registration);
+    if (!current || typeof previous.row.fuelLevel !== "number" || typeof current.row.fuelLevel !== "number") {
+      continue;
+    }
+
+    const fuelLoss = round(previous.row.fuelLevel - current.row.fuelLevel);
+    const distanceDelta =
+      typeof previous.row.odometerKm === "number" && typeof current.row.odometerKm === "number"
+        ? Math.max(0, current.row.odometerKm - previous.row.odometerKm)
+        : 0;
+
+    if (fuelLoss < 15 || distanceDelta > 3) {
+      continue;
+    }
+
+    cases.push({
+      labelDate,
+      type: "overnight_fuel_loss",
+      severity: fuelLoss >= 30 ? "critical" : "high",
+      driverName: normalizeDriver(current.row.driverName || previous.row.driverName),
+      registration,
+      title: "น้ำมันหายข้ามคืน",
+      detail: `${registration} หลังจบรอบมีน้ำมัน ${round(previous.row.fuelLevel)} ลิตร แต่เช้านี้เหลือ ${round(current.row.fuelLevel)} ลิตร หาย ${fuelLoss} ลิตร โดย odometer เพิ่ม ${round(distanceDelta)} กม.`,
+      evidence: {
+        time: current.createdAt.toISOString(),
+        positionDescription: current.row.positionDescription || previous.row.positionDescription,
+        fuelBefore: previous.row.fuelLevel,
+        fuelAfter: current.row.fuelLevel,
+        fuelLiters: fuelLoss,
+        distanceKm: distanceDelta,
+        sampleCount: previousSnapshots.length + currentSnapshots.length,
+      },
+    });
+  }
+
+  return cases;
 }
 
 function buildDriverAuditRows(
@@ -1403,6 +1476,28 @@ function groupSnapshotRows(snapshots: WithId<VehicleStatusSnapshotDocument>[]) {
   return grouped;
 }
 
+function firstRowsByRegistration(snapshots: WithId<VehicleStatusSnapshotDocument>[]) {
+  const rows = new Map<string, { createdAt: Date; row: VehicleStatusSnapshotRow }>();
+  for (const snapshot of snapshots) {
+    for (const row of snapshot.rows) {
+      if (!rows.has(row.registration)) {
+        rows.set(row.registration, { createdAt: snapshot.createdAt, row });
+      }
+    }
+  }
+  return rows;
+}
+
+function latestRowsByRegistration(snapshots: WithId<VehicleStatusSnapshotDocument>[]) {
+  const rows = new Map<string, { createdAt: Date; row: VehicleStatusSnapshotRow }>();
+  for (const snapshot of snapshots) {
+    for (const row of snapshot.rows) {
+      rows.set(row.registration, { createdAt: snapshot.createdAt, row });
+    }
+  }
+  return rows;
+}
+
 function snapshotEvidence(createdAt: Date, row: VehicleStatusSnapshotRow) {
   return {
     time: createdAt.toISOString(),
@@ -1411,6 +1506,19 @@ function snapshotEvidence(createdAt: Date, row: VehicleStatusSnapshotRow) {
     fuelAfter: row.fuelLevel,
     sampleCount: 1,
   };
+}
+
+function getPreviousLabelDate(labelDate: string): string | null {
+  const match = labelDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+  const date = new Date(Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1])));
+  date.setUTCDate(date.getUTCDate() - 1);
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 function buildDataQuality(reportRows: DailyReport["rows"], snapshots: WithId<VehicleStatusSnapshotDocument>[]) {
