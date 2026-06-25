@@ -3,7 +3,6 @@ import {
   AUTH_COOKIE,
   AUTH_MAX_AGE_SECONDS,
   createSessionToken,
-  isAuthConfigured,
   validateCredentials,
 } from "@/lib/auth";
 import { validateStaffLogin } from "@/lib/repositories";
@@ -15,13 +14,6 @@ export async function POST(request: Request) {
         password?: string;
       }
     | null;
-
-  if (!isAuthConfigured()) {
-    return NextResponse.json(
-      { ok: false, message: "ยังไม่ได้ตั้งค่า VSC_AUTH_USERNAME / VSC_AUTH_PASSWORD" },
-      { status: 500 },
-    );
-  }
 
   const username = body?.username?.trim() ?? "";
   const password = body?.password ?? "";

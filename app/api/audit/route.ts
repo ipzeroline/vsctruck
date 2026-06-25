@@ -31,7 +31,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  let stage = "init";
   try {
+    stage = "config";
     const config = getConfig();
     const { searchParams } = request.nextUrl;
     const secret = searchParams.get("secret");
@@ -40,17 +42,24 @@ export async function POST(request: NextRequest) {
     }
 
     const includeReport = searchParams.get("report") === "1";
+    stage = "window";
     const window = getBangkokReportWindow(new Date(), config.reportTimezone);
+    stage = "cartrack_vehicle_status";
     const rows = await new CartrackClient(config).getVehicleStatuses(config.reportMaxVehicles);
+    stage = "save_vehicle_status_snapshot";
     await saveVehicleStatusSnapshot(window.labelDate, rows);
+    stage = "save_fuel_snapshot";
     await saveFuelSnapshot(window.labelDate, rows);
 
     let reportId: string | undefined;
     if (includeReport) {
+      stage = "build_daily_report";
       const report = await buildDailyReport();
+      stage = "save_daily_report";
       reportId = await saveReport(report, false);
     }
 
+    stage = "build_driver_daily_audit";
     const audit = await buildDriverDailyAudit(window.labelDate);
     return NextResponse.json({
       ok: true,
@@ -60,8 +69,13 @@ export async function POST(request: NextRequest) {
       audit,
     });
   } catch (error) {
+    console.error("Audit sync failed", { stage, error });
     return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Unknown error" },
+      {
+        ok: false,
+        stage,
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }
