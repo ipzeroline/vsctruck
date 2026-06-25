@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 9999",
     "lint": "next lint",
     "report:send": "tsx scripts/send-daily-report.ts",
     "report:cron": "tsx scripts/cron.ts",
