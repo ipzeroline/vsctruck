@@ -95,9 +95,17 @@ tail -f logs/server-daily-report.log
 ทดสอบ endpoint production หนึ่งรอบ:
 
 ```bash
-set -a && . ./.env.local && set +a
-curl -fsS -X POST "https://vsctruck.com/api/audit?secret=${REPORT_CRON_SECRET}"
+npm run cron:test:production
 ```
+
+หรือ debug เฉพาะ audit endpoint:
+
+```bash
+set -a && . ./.env.local && set +a
+curl -i -sS -X POST "https://vsctruck.com/api/audit?secret=${REPORT_CRON_SECRET}"
+```
+
+อย่าใช้ `curl -f` ตอน debug เพราะมันจะซ่อน JSON error body ของ API และเห็นแค่ `curl: (22) ... 500`
 
 ## Accuracy Rules
 
