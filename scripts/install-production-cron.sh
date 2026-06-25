@@ -28,16 +28,16 @@ SHELL=/bin/sh
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 # Snapshot sync: ก่อนเริ่มงานทุก 5 นาที เพื่อเก็บน้ำมันตั้งต้น
-*/5 5-6 * * * flock -n /tmp/vsctruck-snapshot-sync.lock /bin/sh -c 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n" >> logs/server-snapshot-sync.log && echo "[\$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")] snapshot sync" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=\%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+*/5 5-6 * * * flock -n /tmp/vsctruck-snapshot-sync.lock /bin/sh "$ROOT_DIR/scripts/run-production-snapshot-sync.sh" "$DOMAIN"
 
 # Snapshot sync: ช่วงทำงานหลักทุก 2 นาที สำหรับจับเติมน้ำมันและสถานะรถ
-*/2 7-17 * * * flock -n /tmp/vsctruck-snapshot-sync.lock /bin/sh -c 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n" >> logs/server-snapshot-sync.log && echo "[\$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")] snapshot sync" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=\%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+*/2 7-17 * * * flock -n /tmp/vsctruck-snapshot-sync.lock /bin/sh "$ROOT_DIR/scripts/run-production-snapshot-sync.sh" "$DOMAIN"
 
 # Snapshot sync: หลังเลิกงานทุก 5 นาที เพื่อปิดรอบและตรวจข้อมูลค้าง
-*/5 18-20 * * * flock -n /tmp/vsctruck-snapshot-sync.lock /bin/sh -c 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n" >> logs/server-snapshot-sync.log && echo "[\$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")] snapshot sync" >> logs/server-snapshot-sync.log && curl -sS -w "\nHTTP_STATUS=\%{http_code}\n" -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+*/5 18-20 * * * flock -n /tmp/vsctruck-snapshot-sync.lock /bin/sh "$ROOT_DIR/scripts/run-production-snapshot-sync.sh" "$DOMAIN"
 
 # Daily Telegram report: ส่งรายงาน 18:00
-0 18 * * * flock -n /tmp/vsctruck-daily-report.lock /bin/sh -c 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && printf "\n" >> logs/server-daily-report.log && echo "[\$(date "+\%Y-\%m-\%d \%H:\%M:\%S \%z")] daily report" >> logs/server-daily-report.log && curl -sS -w "\nHTTP_STATUS=\%{http_code}\n" -X POST "https://$DOMAIN/api/report/run?send=1&secret=\${REPORT_CRON_SECRET}" >> logs/server-daily-report.log 2>&1'
+0 18 * * * flock -n /tmp/vsctruck-daily-report.lock /bin/sh "$ROOT_DIR/scripts/run-production-daily-report.sh" "$DOMAIN"
 # VSCTruck cron end
 CRON
 
