@@ -13,14 +13,14 @@
 สำหรับงานรถที่เริ่มประมาณ 07:00 ให้เก็บ snapshot ตั้งแต่ 05:00 เพื่อให้มีข้อมูลก่อน `firstIgnitionOn`
 
 ```cron
-SHELL=/bin/zsh
+SHELL=/bin/sh
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 # เก็บ snapshot ทุก 5 นาที ช่วง 05:00-20:59
-*/5 5-20 * * * /bin/zsh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
+*/5 5-20 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-snapshot-sync.sh
 
 # ส่งรายงาน Telegram ทุกวัน 18:00
-0 18 * * * /bin/zsh /Users/zeroline/Documents/vsctruck/scripts/run-daily-report.sh
+0 18 * * * /bin/sh /Users/zeroline/Documents/vsctruck/scripts/run-daily-report.sh
 ```
 
 ถ้ารถเริ่มออกก่อน 06:00 ให้ขยายเป็น `*/5 4-20 * * *`
@@ -95,7 +95,7 @@ tail -f logs/server-daily-report.log
 ทดสอบ endpoint production หนึ่งรอบ:
 
 ```bash
-set -a && source .env.local && set +a
+set -a && . ./.env.local && set +a
 curl -fsS -X POST "https://vsctruck.com/api/audit?secret=${REPORT_CRON_SECRET}"
 ```
 

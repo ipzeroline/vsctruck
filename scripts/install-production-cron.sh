@@ -1,5 +1,5 @@
-#!/bin/zsh
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 DOMAIN="${1:-vsctruck.com}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,14 +24,14 @@ crontab -l 2>/dev/null | awk '
 cat >> "$TMP_FILE" <<CRON
 
 # VSCTruck cron start
-SHELL=/bin/zsh
+SHELL=/bin/sh
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 # Snapshot sync: เก็บ fuel/status ทุก 5 นาที ตั้งแต่ 05:00-20:59 Asia/Bangkok/server time
-*/5 5-20 * * * /bin/zsh -lc 'cd "$ROOT_DIR" && set -a && source .env.local && set +a && mkdir -p logs && /usr/bin/curl -fsS -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
+*/5 5-20 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && curl -fsS -X POST "https://$DOMAIN/api/audit?secret=\${REPORT_CRON_SECRET}" >> logs/server-snapshot-sync.log 2>&1'
 
 # Daily Telegram report: ส่งรายงาน 18:00
-0 18 * * * /bin/zsh -lc 'cd "$ROOT_DIR" && set -a && source .env.local && set +a && mkdir -p logs && /usr/bin/curl -fsS -X POST "https://$DOMAIN/api/report/run?send=1&secret=\${REPORT_CRON_SECRET}" >> logs/server-daily-report.log 2>&1'
+0 18 * * * /bin/sh -lc 'cd "$ROOT_DIR" && set -a && . ./.env.local && set +a && mkdir -p logs && curl -fsS -X POST "https://$DOMAIN/api/report/run?send=1&secret=\${REPORT_CRON_SECRET}" >> logs/server-daily-report.log 2>&1'
 # VSCTruck cron end
 CRON
 

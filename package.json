@@ -11,9 +11,9 @@
     "report:cron": "tsx scripts/cron.ts",
     "audit:sync": "tsx scripts/sync-driver-audit.ts",
     "audit:sync:report": "tsx scripts/sync-driver-audit.ts --report",
-    "cron:snapshot": "/bin/zsh scripts/run-snapshot-sync.sh",
-    "cron:daily-report": "/bin/zsh scripts/run-daily-report.sh",
-    "cron:install:production": "/bin/zsh scripts/install-production-cron.sh vsctruck.com"
+    "cron:snapshot": "sh scripts/run-snapshot-sync.sh",
+    "cron:daily-report": "sh scripts/run-daily-report.sh",
+    "cron:install:production": "sh scripts/install-production-cron.sh vsctruck.com"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
