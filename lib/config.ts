@@ -15,6 +15,8 @@ export type AppConfig = {
   mongodbRetentionReportDays: number;
   mongodbRetentionAuditDays: number;
   mongodbRetentionActualFuelDays: number;
+  mongodbMaxPoolSize: number;
+  mongodbMaxIdleTimeMS: number;
 };
 
 export function getConfig(): AppConfig {
@@ -35,6 +37,8 @@ export function getConfig(): AppConfig {
     mongodbRetentionReportDays: readPositiveNumber("MONGODB_RETENTION_REPORT_DAYS", 730),
     mongodbRetentionAuditDays: readPositiveNumber("MONGODB_RETENTION_AUDIT_DAYS", 1095),
     mongodbRetentionActualFuelDays: readPositiveNumber("MONGODB_RETENTION_ACTUAL_FUEL_DAYS", 1095),
+    mongodbMaxPoolSize: readPositiveNumber("MONGODB_MAX_POOL_SIZE", 4),
+    mongodbMaxIdleTimeMS: readPositiveNumber("MONGODB_MAX_IDLE_TIME_MS", 30_000),
   };
 }
 

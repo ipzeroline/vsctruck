@@ -25,9 +25,12 @@ export async function getMongoClient(): Promise<MongoClient> {
   if (!state.promise) {
     const config = getConfig();
     state.promise = new MongoClient(config.mongodbUri, {
-      maxPoolSize: 10,
+      maxPoolSize: config.mongodbMaxPoolSize,
       minPoolSize: 0,
+      maxIdleTimeMS: config.mongodbMaxIdleTimeMS,
       serverSelectionTimeoutMS: 8000,
+      waitQueueTimeoutMS: 5000,
+      maxConnecting: 2,
     }).connect();
   }
 

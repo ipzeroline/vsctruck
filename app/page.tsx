@@ -32,6 +32,9 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FleetStatusRow } from "./components/FleetMap";
 
+const LIVE_REFRESH_INTERVAL_MS = 120_000;
+const LIVE_REFRESH_STALE_MS = 30_000;
+
 const FleetMapPanel = dynamic(
   () => import("./components/FleetMap").then((mod) => mod.FleetMapPanel),
   {
@@ -514,6 +517,9 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     note: "",
   });
   const didAutoLoad = useRef(false);
+  const fleetStatusInFlight = useRef(false);
+  const cronStatusInFlight = useRef(false);
+  const lastLiveRefreshAt = useRef(0);
   const [state, setState] = useState<RunState>({
     status: "idle",
     report: "กดพรีวิวรายงานเพื่อดึงข้อมูลล่าสุดจาก Cartrack",
@@ -629,18 +635,40 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     if (!needsFleetStatus && !needsCronStatus) {
       return;
     }
-    const interval = window.setInterval(() => {
+    const refreshLiveData = (force = false) => {
+      if (!force && document.visibilityState !== "visible") {
+        return;
+      }
+      lastLiveRefreshAt.current = Date.now();
       if (needsFleetStatus) {
         void loadFleetStatus();
       }
       if (needsCronStatus) {
         void loadCronStatus();
       }
-    }, 60000);
-    return () => window.clearInterval(interval);
+    };
+    const refreshWhenStale = () => {
+      if (Date.now() - lastLiveRefreshAt.current >= LIVE_REFRESH_STALE_MS) {
+        refreshLiveData(true);
+      }
+    };
+    const interval = window.setInterval(() => {
+      refreshLiveData();
+    }, LIVE_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshWhenStale);
+    document.addEventListener("visibilitychange", refreshWhenStale);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenStale);
+      document.removeEventListener("visibilitychange", refreshWhenStale);
+    };
   }, [needsCronStatus, needsFleetStatus]);
 
   async function loadFleetStatus() {
+    if (fleetStatusInFlight.current) {
+      return;
+    }
+    fleetStatusInFlight.current = true;
     setMapLoading(true);
     setMapError(undefined);
 
@@ -660,11 +688,16 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
       setMapError(error instanceof Error ? error.message : "โหลดตำแหน่งรถไม่สำเร็จ");
       setMapFallback(undefined);
     } finally {
+      fleetStatusInFlight.current = false;
       setMapLoading(false);
     }
   }
 
   async function loadCronStatus() {
+    if (cronStatusInFlight.current) {
+      return;
+    }
+    cronStatusInFlight.current = true;
     setCronStatusLoading(true);
     setCronStatusError(undefined);
 
@@ -679,6 +712,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
     } catch (error) {
       setCronStatusError(error instanceof Error ? error.message : "โหลดสถานะ cronjob ไม่สำเร็จ");
     } finally {
+      cronStatusInFlight.current = false;
       setCronStatusLoading(false);
     }
   }
