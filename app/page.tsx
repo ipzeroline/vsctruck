@@ -558,7 +558,7 @@ export default function Home({ view = "overview" }: { view?: DashboardView }) {
   );
   const overnightFuelLoss = useMemo(() => buildOvernightFuelLossSummary(driverAudit?.cases ?? []), [driverAudit]);
   const fuelDashboard = useMemo(() => buildFuelDashboard(fuelToday), [fuelToday]);
-  const realtimeFuel = useMemo(() => buildRealtimeFuel(mapRows), [mapRows]);
+  const realtimeFuel = useMemo(() => buildRealtimeFuel(mapRows, rows, selectedReportDate), [mapRows, rows, selectedReportDate]);
   const filteredDistanceRows = useMemo(
     () => filterReportRows(auditSummary.distanceRanking, reportSearch),
     [auditSummary.distanceRanking, reportSearch],
@@ -2747,7 +2747,7 @@ function RealtimeFuelPanel({
       </div>
 
       <div className="realtime-fuel-summary">
-        <MiniStat label="รถที่มี fuel" value={`${data.vehicleCount} คัน`} icon={<Truck size={18} />} />
+        <MiniStat label="รถที่ใช้งานวันนี้" value={`${data.vehicleCount} คัน`} icon={<Truck size={18} />} />
         <MiniStat label="น้ำมันรวม" value={`${formatNumber(data.totalFuelLiters)} ลิตร`} icon={<Fuel size={18} />} />
         <MiniStat label="เฉลี่ยต่อคัน" value={`${formatNumber(data.averageFuelLiters)} ลิตร`} icon={<Gauge size={18} />} />
         <MiniStat label="ข้อมูลล่าสุด" value={data.latestUpdatedLabel} icon={<Clock3 size={18} />} />
@@ -2755,7 +2755,7 @@ function RealtimeFuelPanel({
 
       <div className="realtime-fuel-chart">
         {data.rows.length === 0 ? (
-          <div className="empty-state">ยังไม่มีข้อมูล fuel level สดจาก API</div>
+          <div className="empty-state">ยังไม่มีรถที่ใช้งานวันนี้พร้อมข้อมูล fuel level สดจาก API</div>
         ) : (
           data.rows.map((row, index) => (
             <div className="realtime-fuel-row" key={`${row.registration}-${index}`}>
@@ -3375,7 +3375,13 @@ function buildOvernightFuelLossSummary(cases: DriverAuditCase[]) {
   };
 }
 
-function buildRealtimeFuel(rows: FleetStatusRow[]) {
+function buildRealtimeFuel(rows: FleetStatusRow[], reportRows: ReportRow[], labelDate: string) {
+  const activeRegistrations = new Set(
+    reportRows
+      .filter(isActiveReportRow)
+      .map((row) => normalizeRegistration(row.registration)),
+  );
+  const hasReportActivity = activeRegistrations.size > 0;
   const byRegistration = new Map<string, {
     registration: string;
     driverName: string;
@@ -3384,7 +3390,12 @@ function buildRealtimeFuel(rows: FleetStatusRow[]) {
     updatedAt: string | null | undefined;
   }>();
   rows
-    .filter((row) => typeof row.fuelLevel === "number")
+    .filter((row) =>
+      typeof row.fuelLevel === "number" &&
+      (hasReportActivity
+        ? activeRegistrations.has(normalizeRegistration(row.registration))
+        : isActiveLiveRowForDate(row, labelDate))
+    )
     .forEach((row) => {
       const updatedAt = row.fuelUpdated ?? row.locationUpdated ?? row.eventTs;
       const current = byRegistration.get(row.registration);
@@ -3424,6 +3435,47 @@ function buildRealtimeFuel(rows: FleetStatusRow[]) {
         };
       }),
   };
+}
+
+function isActiveLiveRowForDate(row: FleetStatusRow, labelDate: string) {
+  const updatedAt = row.locationUpdated ?? row.eventTs ?? row.fuelUpdated;
+  return getBangkokDateLabel(updatedAt) === labelDate && ((row.speed ?? 0) > 0 || row.ignition === true);
+}
+
+function isActiveReportRow(row: ReportRow) {
+  if (row.registration === "รอข้อมูล") {
+    return false;
+  }
+  if ((row.distanceKm ?? 0) > 0) {
+    return true;
+  }
+  return hasReportTime(row.firstIgnitionOn) || hasReportTime(row.lastIgnitionOff);
+}
+
+function hasReportTime(value: string | null) {
+  return Boolean(value && value !== "-");
+}
+
+function normalizeRegistration(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function getBangkokDateLabel(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function average(values: number[]) {
