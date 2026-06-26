@@ -1,11 +1,11 @@
 {
     "schema_version": 1,
-    "commit": "9d1255b06a628ef937bae40fdea7c54c12e731cf",
-    "indexed_at": "2026-06-26T23:50:01Z",
+    "commit": "0eaa24cdac50c00f3cb217907ad91fd64bab2d6e",
+    "indexed_at": "2026-06-26T23:52:47Z",
     "project": "Users-zeroline-Documents-vsctruck",
     "nodes": 573,
     "edges": 1148,
     "original_size": 3145728,
-    "compressed_size": 535965,
+    "compressed_size": 535969,
     "compression_level": 3
 }
